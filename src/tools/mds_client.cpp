@@ -207,9 +207,8 @@ int MDSClient::ListDir(const std::string& dirName,
         }
         return 0;
     }
-    std::cout << "ListDir fail with errCode: "
-              << response.statuscode() << std::endl;
-        return -1;
+    std::cout << "ListDir fail with errCode: " << response.statuscode()
+              << std::endl;
     return -1;
 }
 
@@ -1175,6 +1174,25 @@ int MDSClient::ListPoolset(std::vector<PoolsetInfo>* poolsets) {
     std::cout << "ListPoolset fail with errCode: " << response.statuscode()
               << std::endl;
     return -1;
+}
+
+int MDSClient::ListChunkFormatStatus(
+    std::vector<ChunkFormatStatus>* formatStatuses) {
+    assert(formatStatuses != nullptr);
+    curve::mds::topology::ListChunkFormatStatusRequest request;
+    curve::mds::topology::ListChunkFormatStatusResponse response;
+    curve::mds::topology::TopologyService_Stub stub(&channel_);
+
+    auto fp = &curve::mds::topology::TopologyService_Stub::
+                  ListChunkFormatStatus;  // NOLINT
+    if (0 != SendRpcToMds(&request, &response, &stub, fp)) {
+        std::cout << "ListChunkFormatStatus fail" << std::endl;
+        return -1;
+    }
+    for (auto stat : response.chunkformatstatus()) {
+        formatStatuses->push_back(stat);
+    }
+    return 0;
 }
 
 }  // namespace tool

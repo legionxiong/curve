@@ -63,6 +63,7 @@ class RecycleCleanerTest : public testing::Test {
         options.localFileSystem = localfs.get();
         kvStorage_ = std::make_shared<RocksDBStorage>(options);
         ASSERT_TRUE(kvStorage_->Open());
+        logIndex_ = 0;
 
         uint32_t partitionId1 = 1;
         uint32_t fsId = 2;
@@ -88,15 +89,17 @@ class RecycleCleanerTest : public testing::Test {
         rootPram.fsId = fsId;
         rootPram.parent = 0;
         rootPram.type = FsFileType::TYPE_DIRECTORY;
-        ASSERT_EQ(partition_->CreateRootInode(rootPram), MetaStatusCode::OK);
+        ASSERT_EQ(partition_->CreateRootInode(rootPram, logIndex_++),
+                  MetaStatusCode::OK);
         InodeParam managePram;
         managePram.fsId = fsId;
         managePram.parent = ROOTINODEID;
         managePram.type = FsFileType::TYPE_DIRECTORY;
         Inode inode;
-        ASSERT_EQ(partition_->CreateManageInode(
-                      managePram, ManageInodeType::TYPE_RECYCLE, &inode),
-                  MetaStatusCode::OK);
+        ASSERT_EQ(
+            partition_->CreateManageInode(
+                managePram, ManageInodeType::TYPE_RECYCLE, &inode, logIndex_++),
+            MetaStatusCode::OK);
         Dentry dentry;
         dentry.set_fsid(fsId);
         dentry.set_inodeid(RECYCLEINODEID);
@@ -104,7 +107,11 @@ class RecycleCleanerTest : public testing::Test {
         dentry.set_parentinodeid(ROOTINODEID);
         dentry.set_type(FsFileType::TYPE_DIRECTORY);
         dentry.set_txid(0);
-        ASSERT_EQ(partition_->CreateDentry(dentry), MetaStatusCode::OK);
+        Time tm;
+        tm.set_sec(0);
+        tm.set_nsec(0);
+        ASSERT_EQ(partition_->CreateDentry(dentry, tm, logIndex_++),
+                  MetaStatusCode::OK);
     }
 
     void TearDown() override {
@@ -145,6 +152,7 @@ class RecycleCleanerTest : public testing::Test {
     std::shared_ptr<MockMetaServerClient> metaClient_;
     std::shared_ptr<Partition> partition_;
     copyset::MockCopysetNode copysetNode_;
+    int64_t logIndex_;
 };
 
 TEST_F(RecycleCleanerTest, time_func_test) {
@@ -173,7 +181,8 @@ TEST_F(RecycleCleanerTest, dir_time_out_test) {
     EXPECT_CALL(*mdsclient_, GetFsInfo(2, _))
         .WillOnce(DoAll(SetArgPointee<1>(fsInfo),
                         Return(FSStatusCode::UNKNOWN_ERROR)))
-        .WillOnce(DoAll(SetArgPointee<1>(fsInfo), Return(FSStatusCode::OK)));
+        .WillOnce(DoAll(SetArgPointee<1>(fsInfo),
+                        Return(FSStatusCode::OK)));
     ASSERT_FALSE(cleaner_->UpdateFsInfo());
     ASSERT_TRUE(cleaner_->UpdateFsInfo());
 
@@ -204,7 +213,7 @@ TEST_F(RecycleCleanerTest, delete_node_test) {
 
     // delete dentry fail
     {
-        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _))
+        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::UNKNOWN_ERROR));
 
         ASSERT_FALSE(cleaner_->DeleteNode(dentry));
@@ -212,7 +221,7 @@ TEST_F(RecycleCleanerTest, delete_node_test) {
 
     // get parent inode fail
     {
-        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _))
+        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
         EXPECT_CALL(*metaClient_, GetInode(_, _, _, _))
             .WillOnce(Return(MetaStatusCode::UNKNOWN_ERROR));
@@ -222,7 +231,7 @@ TEST_F(RecycleCleanerTest, delete_node_test) {
 
     // update parent inode fail
     {
-        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _))
+        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
         EXPECT_CALL(*metaClient_, GetInode(_, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
@@ -234,7 +243,7 @@ TEST_F(RecycleCleanerTest, delete_node_test) {
 
     // get inode fail
     {
-        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _))
+        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
         EXPECT_CALL(*metaClient_, GetInode(_, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK))
@@ -249,12 +258,12 @@ TEST_F(RecycleCleanerTest, delete_node_test) {
     {
         Inode inode;
         inode.set_nlink(0);
-        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _))
+        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
         EXPECT_CALL(*metaClient_, GetInode(_, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK))
             .WillOnce(
-                 DoAll(SetArgPointee<2>(inode), Return(MetaStatusCode::OK)));
+                DoAll(SetArgPointee<2>(inode), Return(MetaStatusCode::OK)));
         EXPECT_CALL(*metaClient_, UpdateInodeAttrWithOutNlink(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
 
@@ -265,7 +274,7 @@ TEST_F(RecycleCleanerTest, delete_node_test) {
     {
         Inode inode;
         inode.set_nlink(1);
-        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _))
+        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
         EXPECT_CALL(*metaClient_, GetInode(_, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK))
@@ -283,7 +292,7 @@ TEST_F(RecycleCleanerTest, delete_node_test) {
     {
         Inode inode;
         inode.set_nlink(1);
-        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _))
+        EXPECT_CALL(*metaClient_, DeleteDentry(_, _, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK));
         EXPECT_CALL(*metaClient_, GetInode(_, _, _, _))
             .WillOnce(Return(MetaStatusCode::OK))
@@ -354,8 +363,11 @@ TEST_F(RecycleCleanerTest, scan_recycle_test5) {
     dentry2.set_inodeid(2001);
     dentry2.set_txid(0);
     dentry2.set_type(FsFileType::TYPE_DIRECTORY);
-    partition_->CreateDentry(dentry1);
-    partition_->CreateDentry(dentry2);
+    Time tm;
+    tm.set_sec(0);
+    tm.set_nsec(0);
+    partition_->CreateDentry(dentry1, tm, logIndex_++);
+    partition_->CreateDentry(dentry2, tm, logIndex_++);
     LOG(INFO) << "create dentry1 " << dentry1.ShortDebugString();
     LOG(INFO) << "create dentry2 " << dentry2.ShortDebugString();
 
@@ -384,12 +396,17 @@ TEST_F(RecycleCleanerTest, scan_recycle_test6) {
     dentry2.set_inodeid(2001);
     dentry2.set_txid(0);
     dentry2.set_type(FsFileType::TYPE_DIRECTORY);
-    ASSERT_EQ(partition_->CreateDentry(dentry1), MetaStatusCode::OK);
-    ASSERT_EQ(partition_->CreateDentry(dentry2), MetaStatusCode::OK);
+    Time tm;
+    tm.set_sec(0);
+    tm.set_nsec(0);
+    ASSERT_EQ(partition_->CreateDentry(dentry1, tm, logIndex_++),
+              MetaStatusCode::OK);
+    ASSERT_EQ(partition_->CreateDentry(dentry2, tm, logIndex_++),
+              MetaStatusCode::OK);
     LOG(INFO) << "create dentry1 " << dentry1.ShortDebugString();
     LOG(INFO) << "create dentry2 " << dentry2.ShortDebugString();
 
-    EXPECT_CALL(*metaClient_, ListDentry(_, _, _, _, _, _))
+    EXPECT_CALL(*metaClient_, ListDentry(_, _, _, _, _, _, _))
         .WillOnce(Return(MetaStatusCode::OK));
 
     ASSERT_FALSE(cleaner_->ScanRecycle());

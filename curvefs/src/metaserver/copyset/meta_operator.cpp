@@ -123,16 +123,14 @@ void MetaOperator::FastApplyTask() {
     auto task =
         std::bind(&MetaOperator::OnApply, this, node_->GetAppliedIndex(),
                   new MetaOperatorClosure(this), TimeUtility::GetTimeofDayUs());
-    node_->GetApplyQueue()->Push(HashCode(),
-                                 GetOperatorType(), std::move(task));
+    node_->GetApplyQueue()->Push(HashCode(), GetOperatorType(),
+                                 std::move(task));
     timer.stop();
     g_concurrent_fast_apply_wait_latency << timer.u_elapsed();
 }
 
-#define OPERATOR_CAN_BY_PASS_PROPOSE(TYPE)                                     \
-    bool TYPE##Operator::CanBypassPropose() const {                            \
-        return true;                                                           \
-    }                                                                          \
+#define OPERATOR_CAN_BY_PASS_PROPOSE(TYPE) \
+    bool TYPE##Operator::CanBypassPropose() const { return true; }
 
 // below operator are readonly, so can enable lease read
 OPERATOR_CAN_BY_PASS_PROPOSE(GetDentry);
@@ -141,34 +139,35 @@ OPERATOR_CAN_BY_PASS_PROPOSE(GetInode);
 OPERATOR_CAN_BY_PASS_PROPOSE(BatchGetInodeAttr);
 OPERATOR_CAN_BY_PASS_PROPOSE(BatchGetXAttr);
 OPERATOR_CAN_BY_PASS_PROPOSE(GetVolumeExtent);
+OPERATOR_CAN_BY_PASS_PROPOSE(CheckTxStatus);
 
 #undef OPERATOR_CAN_BY_PASS_PROPOSE
 
-#define OPERATOR_ON_APPLY(TYPE)                                                \
-    void TYPE##Operator::OnApply(int64_t index,                                \
-                                 google::protobuf::Closure *done,              \
-                                 uint64_t startTimeUs) {                       \
-        brpc::ClosureGuard doneGuard(done);                                    \
-        uint64_t timeUs = TimeUtility::GetTimeofDayUs();                       \
-        node_->GetMetric()->WaitInQueueLatency(OperatorType::TYPE,             \
-                                               timeUs - startTimeUs);          \
-        auto status = node_->GetMetaStore()->TYPE(                             \
-            static_cast<const TYPE##Request *>(request_),                      \
-            static_cast<TYPE##Response *>(response_));                         \
-        uint64_t executeTime = TimeUtility::GetTimeofDayUs() - timeUs;         \
-        node_->GetMetric()->ExecuteLatency(OperatorType::TYPE, executeTime);   \
-        if (status == MetaStatusCode::OK) {                                    \
-            node_->UpdateAppliedIndex(index);                                  \
-            static_cast<TYPE##Response *>(response_)->set_appliedindex(        \
-                std::max<uint64_t>(index, node_->GetAppliedIndex()));          \
-            node_->GetMetric()->OnOperatorComplete(                            \
-                OperatorType::TYPE,                                            \
-                TimeUtility::GetTimeofDayUs() - startTimeUs, true);            \
-        } else {                                                               \
-            node_->GetMetric()->OnOperatorComplete(                            \
-                OperatorType::TYPE,                                            \
-                TimeUtility::GetTimeofDayUs() - startTimeUs, false);           \
-        }                                                                      \
+#define OPERATOR_ON_APPLY(TYPE)                                              \
+    void TYPE##Operator::OnApply(int64_t index,                              \
+                                 google::protobuf::Closure* done,            \
+                                 uint64_t startTimeUs) {                     \
+        brpc::ClosureGuard doneGuard(done);                                  \
+        uint64_t timeUs = TimeUtility::GetTimeofDayUs();                     \
+        node_->GetMetric()->WaitInQueueLatency(OperatorType::TYPE,           \
+                                               timeUs - startTimeUs);        \
+        auto status = node_->GetMetaStore()->TYPE(                           \
+            static_cast<const TYPE##Request*>(request_),                     \
+            static_cast<TYPE##Response*>(response_), index);                 \
+        uint64_t executeTime = TimeUtility::GetTimeofDayUs() - timeUs;       \
+        node_->GetMetric()->ExecuteLatency(OperatorType::TYPE, executeTime); \
+        if (status == MetaStatusCode::OK) {                                  \
+            node_->UpdateAppliedIndex(index);                                \
+            static_cast<TYPE##Response*>(response_)->set_appliedindex(       \
+                std::max<uint64_t>(index, node_->GetAppliedIndex()));        \
+            node_->GetMetric()->OnOperatorComplete(                          \
+                OperatorType::TYPE,                                          \
+                TimeUtility::GetTimeofDayUs() - startTimeUs, true);          \
+        } else {                                                             \
+            node_->GetMetric()->OnOperatorComplete(                          \
+                OperatorType::TYPE,                                          \
+                TimeUtility::GetTimeofDayUs() - startTimeUs, false);         \
+        }                                                                    \
     }
 
 OPERATOR_ON_APPLY(GetDentry);
@@ -186,6 +185,10 @@ OPERATOR_ON_APPLY(CreateManageInode);
 OPERATOR_ON_APPLY(CreatePartition);
 OPERATOR_ON_APPLY(DeletePartition);
 OPERATOR_ON_APPLY(PrepareRenameTx);
+OPERATOR_ON_APPLY(PrewriteRenameTx);
+OPERATOR_ON_APPLY(CheckTxStatus);
+OPERATOR_ON_APPLY(ResolveTxLock);
+OPERATOR_ON_APPLY(CommitTx);
 OPERATOR_ON_APPLY(UpdateVolumeExtent);
 OPERATOR_ON_APPLY(UpdateDeallocatableBlockGroup);
 
@@ -208,7 +211,8 @@ void GetOrModifyS3ChunkInfoOperator::OnApply(int64_t index,
     {
         brpc::ClosureGuard doneGuard(done);
 
-        rc = metastore->GetOrModifyS3ChunkInfo(request, response, &iterator);
+        rc = metastore->GetOrModifyS3ChunkInfo(request, response, &iterator,
+                                               index);
         if (rc == MetaStatusCode::OK) {
             node_->UpdateAppliedIndex(index);
             response->set_appliedindex(
@@ -251,7 +255,7 @@ void GetVolumeExtentOperator::OnApply(int64_t index,
     auto *response = static_cast<GetVolumeExtentResponse *>(response_);
     auto *metaStore = node_->GetMetaStore();
 
-    auto st = metaStore->GetVolumeExtent(request, response);
+    auto st = metaStore->GetVolumeExtent(request, response, index);
     node_->GetMetric()->OnOperatorComplete(
         OperatorType::GetVolumeExtent,
         TimeUtility::GetTimeofDayUs() - startTimeUs, st == MetaStatusCode::OK);
@@ -292,11 +296,11 @@ void GetVolumeExtentOperator::OnApply(int64_t index,
 }
 
 #define OPERATOR_ON_APPLY_FROM_LOG(TYPE)                                       \
-    void TYPE##Operator::OnApplyFromLog(uint64_t startTimeUs) {                \
+    void TYPE##Operator::OnApplyFromLog(int64_t index, uint64_t startTimeUs) { \
         std::unique_ptr<TYPE##Operator> selfGuard(this);                       \
         TYPE##Response response;                                               \
         auto status = node_->GetMetaStore()->TYPE(                             \
-            static_cast<const TYPE##Request *>(request_), &response);          \
+            static_cast<const TYPE##Request*>(request_), &response, index);    \
         node_->GetMetric()->OnOperatorCompleteFromLog(                         \
             OperatorType::TYPE, TimeUtility::GetTimeofDayUs() - startTimeUs,   \
             status == MetaStatusCode::OK);                                     \
@@ -312,12 +316,16 @@ OPERATOR_ON_APPLY_FROM_LOG(CreateManageInode);
 OPERATOR_ON_APPLY_FROM_LOG(CreatePartition);
 OPERATOR_ON_APPLY_FROM_LOG(DeletePartition);
 OPERATOR_ON_APPLY_FROM_LOG(PrepareRenameTx);
+OPERATOR_ON_APPLY_FROM_LOG(PrewriteRenameTx);
+OPERATOR_ON_APPLY_FROM_LOG(ResolveTxLock);
+OPERATOR_ON_APPLY_FROM_LOG(CommitTx);
 OPERATOR_ON_APPLY_FROM_LOG(UpdateVolumeExtent);
 OPERATOR_ON_APPLY_FROM_LOG(UpdateDeallocatableBlockGroup);
 
 #undef OPERATOR_ON_APPLY_FROM_LOG
 
-void GetOrModifyS3ChunkInfoOperator::OnApplyFromLog(uint64_t startTimeUs) {
+void GetOrModifyS3ChunkInfoOperator::OnApplyFromLog(int64_t index,
+                                                    uint64_t startTimeUs) {
     std::unique_ptr<GetOrModifyS3ChunkInfoOperator> selfGuard(this);
     GetOrModifyS3ChunkInfoRequest request;
     GetOrModifyS3ChunkInfoResponse response;
@@ -325,7 +333,7 @@ void GetOrModifyS3ChunkInfoOperator::OnApplyFromLog(uint64_t startTimeUs) {
     request = *static_cast<const GetOrModifyS3ChunkInfoRequest *>(request_);
     request.set_returns3chunkinfomap(false);
     auto status = node_->GetMetaStore()->GetOrModifyS3ChunkInfo(
-        &request, &response, &iterator);
+        &request, &response, &iterator, index);
     node_->GetMetric()->OnOperatorCompleteFromLog(
         OperatorType::GetOrModifyS3ChunkInfo,
         TimeUtility::GetTimeofDayUs() - startTimeUs,
@@ -333,8 +341,9 @@ void GetOrModifyS3ChunkInfoOperator::OnApplyFromLog(uint64_t startTimeUs) {
 }
 
 #define READONLY_OPERATOR_ON_APPLY_FROM_LOG(TYPE)                              \
-    void TYPE##Operator::OnApplyFromLog(uint64_t startTimeUs) {                \
+    void TYPE##Operator::OnApplyFromLog(int64_t index, uint64_t startTimeUs) { \
         (void)startTimeUs;                                                     \
+        (void)index;                                                           \
         std::unique_ptr<TYPE##Operator> selfGuard(this);                       \
     }
 
@@ -345,6 +354,7 @@ READONLY_OPERATOR_ON_APPLY_FROM_LOG(GetInode);
 READONLY_OPERATOR_ON_APPLY_FROM_LOG(BatchGetInodeAttr);
 READONLY_OPERATOR_ON_APPLY_FROM_LOG(BatchGetXAttr);
 READONLY_OPERATOR_ON_APPLY_FROM_LOG(GetVolumeExtent);
+READONLY_OPERATOR_ON_APPLY_FROM_LOG(CheckTxStatus);
 
 #undef READONLY_OPERATOR_ON_APPLY_FROM_LOG
 
@@ -370,6 +380,10 @@ OPERATOR_REDIRECT(CreateManageInode);
 OPERATOR_REDIRECT(CreatePartition);
 OPERATOR_REDIRECT(DeletePartition);
 OPERATOR_REDIRECT(PrepareRenameTx);
+OPERATOR_REDIRECT(PrewriteRenameTx);
+OPERATOR_REDIRECT(CheckTxStatus);
+OPERATOR_REDIRECT(ResolveTxLock);
+OPERATOR_REDIRECT(CommitTx);
 OPERATOR_REDIRECT(GetVolumeExtent);
 OPERATOR_REDIRECT(UpdateVolumeExtent);
 OPERATOR_REDIRECT(UpdateDeallocatableBlockGroup);
@@ -397,6 +411,10 @@ OPERATOR_ON_FAILED(CreateManageInode);
 OPERATOR_ON_FAILED(CreatePartition);
 OPERATOR_ON_FAILED(DeletePartition);
 OPERATOR_ON_FAILED(PrepareRenameTx);
+OPERATOR_ON_FAILED(PrewriteRenameTx);
+OPERATOR_ON_FAILED(CheckTxStatus);
+OPERATOR_ON_FAILED(ResolveTxLock);
+OPERATOR_ON_FAILED(CommitTx);
 OPERATOR_ON_FAILED(GetVolumeExtent);
 OPERATOR_ON_FAILED(UpdateVolumeExtent);
 OPERATOR_ON_FAILED(UpdateDeallocatableBlockGroup);
@@ -422,6 +440,10 @@ OPERATOR_HASH_CODE(DeleteInode);
 OPERATOR_HASH_CODE(CreateRootInode);
 OPERATOR_HASH_CODE(CreateManageInode);
 OPERATOR_HASH_CODE(PrepareRenameTx);
+OPERATOR_HASH_CODE(PrewriteRenameTx);
+OPERATOR_HASH_CODE(CheckTxStatus);
+OPERATOR_HASH_CODE(ResolveTxLock);
+OPERATOR_HASH_CODE(CommitTx);
 OPERATOR_HASH_CODE(DeletePartition);
 OPERATOR_HASH_CODE(GetVolumeExtent);
 OPERATOR_HASH_CODE(UpdateVolumeExtent);
@@ -460,6 +482,10 @@ OPERATOR_TYPE(DeleteInode);
 OPERATOR_TYPE(CreateRootInode);
 OPERATOR_TYPE(CreateManageInode);
 OPERATOR_TYPE(PrepareRenameTx);
+OPERATOR_TYPE(PrewriteRenameTx);
+OPERATOR_TYPE(CheckTxStatus);
+OPERATOR_TYPE(ResolveTxLock);
+OPERATOR_TYPE(CommitTx);
 OPERATOR_TYPE(CreatePartition);
 OPERATOR_TYPE(DeletePartition);
 OPERATOR_TYPE(GetVolumeExtent);

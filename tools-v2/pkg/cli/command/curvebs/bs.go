@@ -34,7 +34,9 @@ import (
 	"github.com/opencurve/curve/tools-v2/pkg/cli/command/curvebs/query"
 	"github.com/opencurve/curve/tools-v2/pkg/cli/command/curvebs/snapshot"
 	"github.com/opencurve/curve/tools-v2/pkg/cli/command/curvebs/status"
+	"github.com/opencurve/curve/tools-v2/pkg/cli/command/curvebs/stop"
 	"github.com/opencurve/curve/tools-v2/pkg/cli/command/curvebs/update"
+	"github.com/opencurve/curve/tools-v2/pkg/cli/command/curvebs/export"
 )
 
 type CurveBsCommand struct {
@@ -54,6 +56,8 @@ func (bsCmd *CurveBsCommand) AddSubCommands() {
 		clean_recycle.NewCleanRecycleCommand(),
 		check.NewCheckCommand(),
 		snapshot.NewSnapshotCommand(),
+		stop.NewStopCommand(),
+		export.NewExportCommand(),
 	)
 }
 

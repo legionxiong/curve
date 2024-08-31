@@ -29,6 +29,8 @@
 #include <vector>
 
 #include "curvefs/src/mds/codec/codec.h"
+#include "curvefs/src/mds/metric/fs_metric.h"
+#include "src/common/timeutility.h"
 
 namespace curvefs {
 namespace mds {
@@ -39,6 +41,7 @@ using ::curve::kvstorage::KVStorageClient;
 bool MemoryFsStorage::Init() {
     WriteLockGuard writeLockGuard(rwLock_);
     fsInfoMap_.clear();
+    tsId_.store(1);
     return true;
 }
 
@@ -159,6 +162,38 @@ void MemoryFsStorage::GetAll(std::vector<FsInfoWrapper>* fsInfoVec) {
     }
 }
 
+FSStatusCode MemoryFsStorage::SetFsUsage(
+    const std::string& fsName, const FsUsage& fsUsage) {
+    WriteLockGuard writeLockGuard(fsUsedUsageLock_);
+    fsUsageMap_[fsName] = fsUsage;
+    return FSStatusCode::OK;
+}
+
+FSStatusCode MemoryFsStorage::GetFsUsage(
+    const std::string& fsName, FsUsage* usage, bool fromCache) {
+    ReadLockGuard readLockGuard(fsUsedUsageLock_);
+    auto it = fsUsageMap_.find(fsName);
+    if (it == fsUsageMap_.end()) {
+        return FSStatusCode::NOT_FOUND;
+    } else {
+        *usage = it->second;
+    }
+    return FSStatusCode::OK;
+}
+
+FSStatusCode MemoryFsStorage::DeleteFsUsage(const std::string& fsName) {
+    WriteLockGuard writeLockGuard(fsUsedUsageLock_);
+    fsUsageMap_.erase(fsName);
+
+    return FSStatusCode::OK;
+}
+
+FSStatusCode MemoryFsStorage::Tso(uint64_t* ts, uint64_t* timestamp) {
+    *timestamp = curve::common::TimeUtility::GetTimeofDayMs();
+    *ts = tsId_.fetch_add(1, std::memory_order_relaxed);
+    return FSStatusCode::OK;
+}
+
 PersisKVStorage::PersisKVStorage(
     const std::shared_ptr<curve::kvstorage::KVStorageClient>& storage)
     : storage_(storage),
@@ -166,7 +201,8 @@ PersisKVStorage::PersisKVStorage(
       fsLock_(),
       fs_(),
       idToNameLock_(),
-      idToName_() {}
+      idToName_(),
+      tsIdGen_(new TsIdGenerator(storage_)) {}
 
 PersisKVStorage::~PersisKVStorage() = default;
 
@@ -180,8 +216,11 @@ FSStatusCode PersisKVStorage::Get(uint64_t fsId, FsInfoWrapper* fsInfo) {
 }
 
 bool PersisKVStorage::Init() {
-    bool ret = LoadAllFs();
-    return ret;
+    if (!LoadAllFs()) {
+        LOG(ERROR) << "Load all fs failed";
+        return false;
+    }
+    return true;
 }
 
 void PersisKVStorage::Uninit() {}
@@ -369,6 +408,24 @@ bool PersisKVStorage::LoadAllFs() {
         }
 
         fs_.emplace(fsInfo.fsname(), std::move(fsInfo));
+
+        // load fs usage to cache
+        FsUsage fsUsage;
+        auto ret = GetFsUsage(fsInfo.fsname(), &fsUsage, false);
+        if (ret == FSStatusCode::NOT_FOUND) {
+            SetFsUsage(fsInfo.fsname(), fsUsage);
+        }
+        if (ret != FSStatusCode::OK) {
+            LOG(ERROR) << "Load fs usage failed, fsName: " << fsInfo.fsname();
+            return false;
+        }
+        {
+            WriteLockGuard lock(fsUsageCacheMutex_);
+            fsUsageCache_[fsInfo.fsname()] = fsUsage;
+            FsMetric::GetInstance().SetFsUsage(fsInfo.fsname(), fsUsage);
+            FsMetric::GetInstance().SetCapacity(
+                fsInfo.fsname(), fsInfo.capacity());
+        }
     }
 
     return true;
@@ -459,6 +516,79 @@ void PersisKVStorage::GetAll(std::vector<FsInfoWrapper>* fsInfoVec) {
     for (const auto& it : fs_) {
         fsInfoVec->push_back(it.second);
     }
+}
+
+FSStatusCode PersisKVStorage::SetFsUsage(
+    const std::string& fsName, const FsUsage& usage) {
+    std::string key = codec::EncodeFsUsageKey(fsName);
+    std::string value;
+    if (!codec::EncodeProtobufMessage(usage, &value)) {
+        LOG(ERROR) << "Encode fsUsage failed" << usage.ShortDebugString();
+        return FSStatusCode::INTERNAL_ERROR;
+    }
+
+    int ret = storage_->Put(key, value);
+    if (ret != EtcdErrCode::EtcdOK) {
+        LOG(ERROR) << "Put key-value to storage failed, fsUsage"
+                   << usage.ShortDebugString();
+        return FSStatusCode::INTERNAL_ERROR;
+    }
+    fsUsageCache_[fsName] = usage;
+    return FSStatusCode::OK;
+}
+
+FSStatusCode PersisKVStorage::GetFsUsage(
+    const std::string& fsName, FsUsage* usage, bool fromCache) {
+    if (fromCache) {
+        ReadLockGuard lock(fsUsageCacheMutex_);
+        if (fsUsageCache_.find(fsName) != fsUsageCache_.end()) {
+            *usage = fsUsageCache_[fsName];
+            return FSStatusCode::OK;
+        } else {
+            return FSStatusCode::NOT_FOUND;
+        }
+    }
+
+    std::string key = codec::EncodeFsUsageKey(fsName);
+    std::string value;
+    int ret = storage_->Get(key, &value);
+    if (ret == EtcdErrCode::EtcdKeyNotExist) {
+        return FSStatusCode::NOT_FOUND;
+    }
+    if (ret != EtcdErrCode::EtcdOK) {
+        LOG(ERROR) << "Get fs usage from storage failed, fsName: " << fsName;
+        return FSStatusCode::INTERNAL_ERROR;
+    }
+    if (!codec::DecodeProtobufMessage(value, usage)) {
+        LOG(ERROR) << "Decode fsUsage failed, encoded fsName: " << fsName;
+        return FSStatusCode::INTERNAL_ERROR;
+    }
+
+    return FSStatusCode::OK;
+}
+
+FSStatusCode PersisKVStorage::DeleteFsUsage(const std::string& fsName) {
+    {
+        WriteLockGuard lock(fsUsageCacheMutex_);
+        fsUsageCache_.erase(fsName);
+    }
+
+    std::string key = codec::EncodeFsUsageKey(fsName);
+    int ret = storage_->Delete(key);
+    if (ret != EtcdErrCode::EtcdOK) {
+        LOG(ERROR) << "Delete fs usage from storage failed, fsName: " << fsName;
+        return FSStatusCode::INTERNAL_ERROR;
+    }
+    return FSStatusCode::OK;
+}
+
+FSStatusCode PersisKVStorage::Tso(uint64_t* ts, uint64_t* timestamp) {
+    *timestamp = curve::common::TimeUtility::CLockRealTimeMs();
+    if (tsIdGen_->GenTsId(ts)) {
+        return FSStatusCode::OK;
+    }
+    LOG(ERROR) << "Gen ts failed";
+    return FSStatusCode::INTERNAL_ERROR;
 }
 
 }  // namespace mds

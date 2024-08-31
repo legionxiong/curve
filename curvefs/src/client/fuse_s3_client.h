@@ -24,13 +24,14 @@
 #ifndef CURVEFS_SRC_CLIENT_FUSE_S3_CLIENT_H_
 #define CURVEFS_SRC_CLIENT_FUSE_S3_CLIENT_H_
 
+#include <list>
 #include <memory>
 #include <string>
-#include <list>
-#include <vector>
 #include <utility>
+#include <vector>
 
 #include "curvefs/src/client/fuse_client.h"
+#include "curvefs/src/client/metric/client_metric.h"
 #include "curvefs/src/client/s3/client_s3_cache_manager.h"
 #include "curvefs/src/client/warmup/warmup_manager.h"
 #include "curvefs/src/volume/common.h"
@@ -53,13 +54,17 @@ class FuseS3Client : public FuseClient {
     FuseS3Client()
         : FuseClient(), s3Adaptor_(std::make_shared<S3ClientAdaptorImpl>()) {
         auto readFunc = [this](fuse_req_t req, fuse_ino_t ino, size_t size,
-                               off_t off, struct fuse_file_info *fi,
-                               char *buffer, size_t *rSize) {
+                               off_t off, struct fuse_file_info* fi,
+                               char* buffer, size_t* rSize) {
             return FuseOpRead(req, ino, size, off, fi, buffer, rSize);
+        };
+        auto readLinkFunc = [this](fuse_req_t req, fuse_ino_t ino,
+                                   std::string* linkStr) {
+            return FuseClient::FuseOpReadLink(req, ino, linkStr);
         };
         warmupManager_ = std::make_shared<warmup::WarmupManagerS3Impl>(
             metaClient_, inodeManager_, dentryManager_, fsInfo_, readFunc,
-            s3Adaptor_, nullptr);
+            readLinkFunc, nullptr, s3Adaptor_);
     }
 
     FuseS3Client(const std::shared_ptr<MdsClient> &mdsClient,
@@ -129,6 +134,7 @@ class FuseS3Client : public FuseClient {
     // s3 adaptor
     std::shared_ptr<S3ClientAdaptor> s3Adaptor_;
     std::shared_ptr<KVClientManager> kvClientManager_;
+    std::unique_ptr<metric::FuseS3ClientIOLatencyMetric> ioLatencyMetric_;
 
     static constexpr auto MIN_WRITE_CACHE_SIZE = 8 * kMiB;
 };

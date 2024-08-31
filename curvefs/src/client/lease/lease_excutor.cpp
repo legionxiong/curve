@@ -31,6 +31,10 @@ using curvefs::mds::topology::PartitionTxId;
 namespace curvefs {
 namespace client {
 
+namespace common {
+DECLARE_int32(TxVersion);
+}  // namespace common
+
 LeaseExecutor::~LeaseExecutor() {
     if (task_) {
         task_->Stop();
@@ -71,26 +75,32 @@ void LeaseExecutor::Stop() {
 }
 
 bool LeaseExecutor::RefreshLease() {
+    // for tx v2 txIds and latestTxIdList will empty here
     // get partition txid list
     std::vector<PartitionTxId> txIds;
-    metaCache_->GetAllTxIds(&txIds);
-
+    if (common::FLAGS_TxVersion == 1) {
+        metaCache_->GetAllTxIds(&txIds);
+    }
     // refresh from mds
     std::vector<PartitionTxId> latestTxIdList;
-    FSStatusCode ret = mdsCli_->RefreshSession(txIds, &latestTxIdList,
-                                               fsName_, mountpoint_,
-                                               enableSumInDir_);
+    std::string mdsAddrs = mdsCli_->GetMdsAddrs();
+    std::string mdsAddrsOverride;
+    FSStatusCode ret =
+        mdsCli_->RefreshSession(txIds, &latestTxIdList, fsName_, mountpoint_,
+                                enableSumInDir_, mdsAddrs, &mdsAddrsOverride);
+
     if (ret != FSStatusCode::OK) {
         LOG(ERROR) << "LeaseExecutor refresh session fail, ret = " << ret
                    << ", errorName = " << FSStatusCode_Name(ret);
         return true;
     }
-
     // update to metacache
     std::for_each(latestTxIdList.begin(), latestTxIdList.end(),
                   [&](const PartitionTxId &item) {
                       metaCache_->SetTxId(item.partitionid(), item.txid());
                   });
+    // update mds addrs
+    mdsCli_->SetMdsAddrs(mdsAddrsOverride);
     return true;
 }
 

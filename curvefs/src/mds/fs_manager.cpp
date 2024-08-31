@@ -257,6 +257,19 @@ bool FsManager::CheckFsName(const std::string& fsName) {
     return true;
 }
 
+bool FsManager::TestS3(const std::string& fsName) {
+    const Aws::String aws_key(fsName.c_str(), fsName.size());
+    std::string value(1024, 'a');
+    if (0 != s3Adapter_->PutObject(aws_key, value)) {
+        return false;
+    } else {
+        if (0 != s3Adapter_->DeleteObject(aws_key)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 FSStatusCode FsManager::CreateFs(const ::curvefs::mds::CreateFsRequest* request,
                                  FsInfo* fsInfo) {
     const auto& fsName = request->fsname();
@@ -308,7 +321,7 @@ FSStatusCode FsManager::CreateFs(const ::curvefs::mds::CreateFsRequest* request,
         option_.s3AdapterOption.s3Address = s3Info.endpoint();
         option_.s3AdapterOption.bucketName = s3Info.bucketname();
         s3Adapter_->Reinit(option_.s3AdapterOption);
-        if (!s3Adapter_->BucketExist()) {
+        if (!TestS3(fsName)) {
             LOG(ERROR) << "CreateFs " << fsName
                        << " error, s3info is not available!";
             return FSStatusCode::S3_INFO_ERROR;
@@ -569,6 +582,19 @@ FSStatusCode FsManager::DeleteFs(const std::string& fsName) {
         return FSStatusCode::UNKNOWN_ERROR;
     }
 
+    // 4. remove from usage cache and etcd
+    {
+        WriteLockGuard wlock(fsUsageMutex_);
+        fsStorage_->DeleteFsUsage(fsName);
+        if (ret != FSStatusCode::OK) {
+            LOG(WARNING) << "DeleteFsUsage failed"
+                         << ", fsName = " << fsName
+                         << ", ret = " << FSStatusCode_Name(ret);
+            // do not abort deletion
+        }
+        FsMetric::GetInstance().DeleteFsUsage(fsName);
+    }
+
     return FSStatusCode::OK;
 }
 
@@ -777,10 +803,45 @@ FSStatusCode FsManager::GetFsInfo(const std::string& fsName, uint32_t fsId,
     return FSStatusCode::OK;
 }
 
+FSStatusCode FsManager::UpdateFsInfo(
+    const ::curvefs::mds::UpdateFsInfoRequest* req) {
+    const auto& fsName = req->fsname();
+    NameLockGuard lock(nameLock_, fsName);
+
+    // 1. query fs
+    FsInfoWrapper wrapper;
+    FSStatusCode ret = fsStorage_->Get(fsName, &wrapper);
+    if (ret != FSStatusCode::OK) {
+        LOG(WARNING) << "UpdateFsInfo fail, get fs fail, fsName = " << fsName
+                     << ", errCode = " << FSStatusCode_Name(ret);
+        return ret;
+    }
+
+    // 2. check fs status
+    FsStatus status = wrapper.GetStatus();
+    if (status == FsStatus::NEW) {
+        LOG(WARNING) << "UpdateFsInfo fs is not inited, fsName = " << fsName;
+        return FSStatusCode::NOT_INITED;
+    } else if (status == FsStatus::DELETING) {
+        LOG(WARNING) << "UpdateFsInfo fs is in deleting, fsName = " << fsName;
+        return FSStatusCode::UNDER_DELETING;
+    }
+
+    // 3. update fs info
+    // set capacity
+    if (req->has_capacity()) {
+        wrapper.SetCapacity(req->capacity());
+    }
+
+    ret = fsStorage_->Update(wrapper);
+    if (ret == FSStatusCode::OK) {
+        FsMetric::GetInstance().SetCapacity(fsName, req->capacity());
+    }
+    return ret;
+}
+
 int FsManager::IsExactlySameOrCreateUnComplete(const std::string& fsName,
-                                               FSType fsType,
-                                               uint64_t blocksize,
-                                               const FsDetail& detail) {
+    FSType fsType, uint64_t blocksize, const FsDetail& detail) {
     FsInfoWrapper existFs;
 
     auto volumeInfoComparator = [](common::Volume lhs, common::Volume rhs) {
@@ -795,16 +856,34 @@ int FsManager::IsExactlySameOrCreateUnComplete(const std::string& fsName,
         return google::protobuf::util::MessageDifferencer::Equals(lhs, rhs);
     };
 
-    auto checkFsInfo = [fsType, volumeInfoComparator](const FsDetail& lhs,
-                                                      const FsDetail& rhs) {
+    auto s3InfoComparator = [](common::S3Info newFs, common::S3Info existFs) {
+        // If the s3info detail stored in mds doesn't have prefix, the new
+        // client which has prefix value bigger than 0 can't mount filesystem.
+        if (newFs.has_objectprefix() && !existFs.has_objectprefix() &&
+            newFs.objectprefix() != 0) {
+            return false;
+        }
+        // If the s3info detail stored in mds has prefix value bigger than 0,
+        // the old client which doesn't have prefix can't mount filesystem.
+        if (existFs.has_objectprefix() && !newFs.has_objectprefix() &&
+            existFs.objectprefix() != 0) {
+            return false;
+        }
+
+        return google::protobuf::util::MessageDifferencer::Equals(
+              newFs, existFs);
+    };
+
+    auto checkFsInfo = [fsType, volumeInfoComparator, s3InfoComparator](
+                           const FsDetail& newFs, const FsDetail& existFs) {
         switch (fsType) {
             case curvefs::common::FSType::TYPE_S3:
-                return MessageDifferencer::Equals(lhs.s3info(), rhs.s3info());
+                return s3InfoComparator(newFs.s3info(), existFs.s3info());
             case curvefs::common::FSType::TYPE_VOLUME:
-                return volumeInfoComparator(lhs.volume(), rhs.volume());
+                return volumeInfoComparator(newFs.volume(), existFs.volume());
             case curvefs::common::FSType::TYPE_HYBRID:
-                return MessageDifferencer::Equals(lhs.s3info(), rhs.s3info()) &&
-                       volumeInfoComparator(lhs.volume(), rhs.volume());
+                return s3InfoComparator(newFs.s3info(), existFs.s3info()) &&
+                       volumeInfoComparator(newFs.volume(), existFs.volume());
         }
 
         return false;
@@ -838,6 +917,39 @@ void FsManager::GetAllFsInfo(
     LOG(INFO) << "get all fsinfo.";
 }
 
+FSStatusCode FsManager::UpdateFsUsedBytes(
+    const std::string& fsName, int64_t deltaBytes) {
+    WriteLockGuard wlock(fsUsageMutex_);
+
+    FsUsage usage;
+    auto ret = fsStorage_->GetFsUsage(fsName, &usage, true);
+    if (ret == FSStatusCode::NOT_FOUND) {
+        usage.set_usedbytes(deltaBytes);
+        ret = fsStorage_->SetFsUsage(fsName, usage);
+        if (ret == FSStatusCode::OK) {
+            FsMetric::GetInstance().SetFsUsage(fsName, usage);
+        }
+        return ret;
+    }
+
+    if (ret != FSStatusCode::OK) {
+        LOG(WARNING) << "UpdateFsUsedBytes fail, get fs usage fail, fsName = "
+                     << fsName << ", errCode = " << FSStatusCode_Name(ret);
+        return ret;
+    }
+
+    if (deltaBytes < 0 && usage.usedbytes() < -deltaBytes) {
+        usage.set_usedbytes(0);
+    } else {
+        usage.set_usedbytes(usage.usedbytes() + deltaBytes);
+    }
+    ret = fsStorage_->SetFsUsage(fsName, usage);
+    if (ret == FSStatusCode::OK) {
+        FsMetric::GetInstance().SetFsUsage(fsName, usage);
+    }
+    return ret;
+}
+
 void FsManager::RefreshSession(const RefreshSessionRequest* request,
     RefreshSessionResponse* response) {
     if (request->txids_size() != 0) {
@@ -862,6 +974,33 @@ void FsManager::RefreshSession(const RefreshSessionRequest* request,
     }
 
     response->set_enablesumindir(wrapper.ProtoFsInfo().enablesumindir());
+
+    // collect fs delta reported by client
+    if (request->has_fsdelta()) {
+        const auto& delta = request->fsdelta();
+        if (delta.has_bytes()) {
+            ret = UpdateFsUsedBytes(request->fsname(), delta.bytes());
+            if (ret != FSStatusCode::OK) {
+                LOG(WARNING)
+                    << "UpdateFsUsedBytes fail, fsName = " << request->fsname()
+                    << ", errCode = " << FSStatusCode_Name(ret);
+            }
+        }
+    }
+    // set response
+    response->set_fscapacity(wrapper.GetCapacity());
+    FsUsage usage;
+    fsStorage_->GetFsUsage(request->fsname(), &usage, true);
+    response->set_fsusedbytes(usage.usedbytes());
+    {
+        ReadLockGuard lock(clientMdsAddrsOverrideMutex_);
+        VLOG(6) << "clientMdsAddrsOverride_ = " << clientMdsAddrsOverride_
+                << ", request->mdsaddrs() = " << request->mdsaddrs();
+        if (!clientMdsAddrsOverride_.empty() && request->has_mdsaddrs() &&
+            request->mdsaddrs() != clientMdsAddrsOverride_) {
+            response->set_mdsaddrsoverride(clientMdsAddrsOverride_);
+        }
+    }
 }
 
 FSStatusCode FsManager::ReloadFsVolumeSpace() {
@@ -1164,6 +1303,32 @@ bool FsManager::FillVolumeInfo(common::Volume* volume) {
     volume->set_volumesize(size);
     volume->set_extendalignment(alignment);
     return true;
+}
+
+std::string FsManager::GetClientMdsAddrsOverride() {
+    ReadLockGuard lock(clientMdsAddrsOverrideMutex_);
+    return clientMdsAddrsOverride_;
+}
+
+void FsManager::SetClientMdsAddrsOverride(const std::string& addrs) {
+    // always add active mds to override to improve availability
+    auto addrsWithActiveMds = addrs + "," + option_.mdsListenAddr;
+    WriteLockGuard lock(clientMdsAddrsOverrideMutex_);
+    clientMdsAddrsOverride_ = addrsWithActiveMds;
+}
+
+void FsManager::Tso(const TsoRequest* request, TsoResponse* response) {
+    uint64_t ts;
+    uint64_t timestamp;
+    auto ret = fsStorage_->Tso(&ts, &timestamp);
+    if (ret != FSStatusCode::OK) {
+        LOG(ERROR) << "Tso fail, ret = " << FSStatusCode_Name(ret);
+        response->set_statuscode(ret);
+        return;
+    }
+    response->set_ts(ts);
+    response->set_timestamp(timestamp);
+    response->set_statuscode(ret);
 }
 
 }  // namespace mds

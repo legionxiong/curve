@@ -34,10 +34,10 @@ namespace curvefs {
 namespace metaserver {
 
 class MetaStoreFStream;
-
 namespace storage {
 
 enum KEY_TYPE : unsigned char {
+    kTypeUnknown = 0,
     kTypeInode = 1,
     kTypeS3ChunkInfo = 2,
     kTypeDentry = 3,
@@ -46,6 +46,13 @@ enum KEY_TYPE : unsigned char {
     kTypeBlockGroup = 6,
     kTypeDeallocatableBlockGroup = 7,
     kTypeDeallocatableInode = 8,
+    kTypeAppliedIndex = 9,
+    kTypeTransaction = 10,
+    kTypeInodeCount = 11,
+    kTypeDentryCount = 12,
+    kTypeTxLock = 13,
+    kTypeTxWrite = 14,
+    kTypeDelInode = 15
 };
 
 // NOTE: you must generate all table name by NameGenerator class for
@@ -56,6 +63,8 @@ class NameGenerator {
     explicit NameGenerator(uint32_t partitionId);
 
     std::string GetInodeTableName() const;
+
+    std::string GetDelInodeTableName() const;
 
     std::string GetDeallocatableInodeTableName() const;
 
@@ -71,19 +80,40 @@ class NameGenerator {
 
     std::string GetDeallocatableBlockGroupTableName() const;
 
+    std::string GetAppliedIndexTableName() const;
+
+    std::string GetTransactionTableName() const;
+
+    std::string GetInodeCountTableName() const;
+
+    std::string GetDentryCountTableName() const;
+
+    std::string GetTxLockTableName() const;
+
+    std::string GetTxWriteTableName() const;
+
     static size_t GetFixedLength();
+
+    static KEY_TYPE DecodeKeyType(const std::string& name);
 
  private:
     std::string Format(KEY_TYPE type, uint32_t partitionId);
 
  private:
     std::string tableName4Inode_;
+    std::string tableName4DelInode_;
     std::string tableName4DeallocatableIndoe_;
     std::string tableName4DeallocatableBlockGroup_;
     std::string tableName4S3ChunkInfo_;
     std::string tableName4Dentry_;
     std::string tableName4VolumeExtent_;
     std::string tableName4InodeAuxInfo_;
+    std::string tableName4AppliedIndex_;
+    std::string tableName4Transaction_;
+    std::string tableName4InodeCount_;
+    std::string tableName4DentryCount_;
+    std::string tableName4TxLock_;
+    std::string tableName4TxWrite_;
 };
 
 class StorageKey {
@@ -110,6 +140,8 @@ class StorageKey {
  *   Key4InodeAuxInfo                 : kTypeInodeAuxInfo:fsId:inodeId
  *   Key4DeallocatableBlockGroup      : kTypeBlockGroup:fsId:volumeOffset
  *   Prefix4AllDeallocatableBlockGroup: kTypeBlockGroup:
+ *   Key4TxWrite                      : kTypeTxWrite:parentInodeId:name/ts
+ *   Prefix4TxWrite                   : kTypeTxWrite:parentInodeId:name/
  */
 
 class Key4Inode : public StorageKey {
@@ -272,6 +304,41 @@ class Prefix4AllDentry : public StorageKey {
 
  private:
     static const KEY_TYPE keyType_ = kTypeDentry;
+};
+
+class Key4TxWrite : public Key4Dentry {
+ public:
+    Key4TxWrite() = default;
+
+    Key4TxWrite(uint32_t fsId, uint64_t parentInodeId,
+                 const std::string& name, uint64_t ts) :
+                 Key4Dentry(fsId, parentInodeId, name), ts(ts) {}
+
+    std::string SerializeToString() const override;
+
+    bool ParseFromString(const std::string& value) override;
+
+ public:
+    uint64_t ts;
+
+ private:
+    static const KEY_TYPE keyType_ = kTypeTxWrite;
+};
+
+class Prefix4TxWrite : public Key4Dentry {
+ public:
+    Prefix4TxWrite() = default;
+
+    Prefix4TxWrite(uint32_t fsId, uint64_t parentInodeId,
+                 const std::string& name) :
+                 Key4Dentry(fsId, parentInodeId, name) {}
+
+    std::string SerializeToString() const override;
+
+    bool ParseFromString(const std::string& value) override;
+
+ private:
+    static const KEY_TYPE keyType_ = kTypeTxWrite;
 };
 
 class Key4VolumeExtentSlice : public StorageKey {

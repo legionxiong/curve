@@ -23,6 +23,7 @@
 package cmderror
 
 import (
+	"errors"
 	"fmt"
 
 	fscopyset "github.com/opencurve/curve/tools-v2/proto/curvefs/proto/copyset"
@@ -69,7 +70,7 @@ func (ce *CmdError) ToError() error {
 	if ce.Code == CODE_SUCCESS {
 		return nil
 	}
-	return fmt.Errorf(ce.Message)
+	return errors.New(ce.Message)
 }
 
 func NewSucessCmdError() *CmdError {
@@ -265,6 +266,9 @@ var (
 	ErrGetClusterFsInfo = func() *CmdError {
 		return NewInternalCmdError(8, "get cluster fs info failed, the error is: \n%s")
 	}
+	ErrUpdateClusterFsInfo = func() *CmdError {
+		return NewInternalCmdError(9, "update cluster fs info failed, the error is: \n%s")
+	}
 	ErrGetAddr = func() *CmdError {
 		return NewInternalCmdError(9, "invalid %s addr is: %s")
 	}
@@ -376,15 +380,12 @@ var (
 	ErrBsListZone = func() *CmdError {
 		return NewInternalCmdError(39, "list zone fail. the error is %s")
 	}
-
 	ErrBsDeleteFile = func() *CmdError {
 		return NewInternalCmdError(40, "delete file fail. the error is %s")
 	}
-
 	ErrRespTypeNoExpected = func() *CmdError {
 		return NewInternalCmdError(41, "the response type is not as expected, should be: %s")
 	}
-
 	ErrGetPeer = func() *CmdError {
 		return NewInternalCmdError(42, "invalid peer args, err: %s")
 	}
@@ -475,6 +476,39 @@ var (
 	ErrBsGetAllSnapshotResult = func() *CmdError {
 		return NewInternalCmdError(72, "get all snapshot results fail, err: %s")
 	}
+	ErrVerifyError = func() *CmdError {
+		return NewInternalCmdError(73, "verify fail, err: %s")
+	}
+	ErrListWarmup = func() *CmdError {
+		return NewInternalCmdError(74, "list warmup progress fail, err: %s")
+	}
+	ErrBsGetFormatStatus = func() *CmdError {
+		return NewInternalCmdError(75, "get format status fail, err: %s")
+	}
+	ErrBsGetSegmentInfo = func() *CmdError {
+		return NewInternalCmdError(76, "get segment info fail, err: %s")
+	}
+	ErrBsGetChunkHash = func() *CmdError {
+		return NewInternalCmdError(77, "get chunk hash fail, err: %s")
+	}
+	ErrBsListSnaspshot = func(requestId, code, message string) *CmdError {
+		return NewInternalCmdError(78, fmt.Sprintf("list snapshot fail, requestId: %s, code: %s, message: %s", requestId, code, message))
+	}
+	ErrBsGetCloneRecover = func() *CmdError {
+		return NewInternalCmdError(79, "get clone-recover fail, err: %s")
+	}
+	ErrInvalidMetaServerAddr = func() *CmdError {
+		return NewInternalCmdError(80, "invalid metaserver external addr: %s")
+	}
+	ErrBsRecoverFile = func() *CmdError {
+		return NewInternalCmdError(81, "recover file fail, err: %s")
+	}
+	ErrTargetCluster = func() *CmdError {
+		return NewInternalCmdError(82, "get cluster target error: %s")
+	}
+	ErrTargetClient = func() *CmdError {
+		return NewInternalCmdError(83, "get client target error: %s")
+	}
 
 	// http error
 	ErrHttpUnreadableResult = func() *CmdError {
@@ -545,6 +579,19 @@ var (
 			message = "fsname should match regex: ^([a-z0-9]+\\-?)+$"
 		default:
 			message = fmt.Sprintf("delete fs failed!, error is %s", mds.FSStatusCode_name[int32(code)])
+		}
+		return NewRpcReultCmdError(statusCode, message)
+	}
+	ErrUpdateFs = func(statusCode int) *CmdError {
+		var message string
+		code := mds.FSStatusCode(statusCode)
+		switch code {
+		case mds.FSStatusCode_OK:
+			message = "success"
+		case mds.FSStatusCode_NOT_FOUND:
+			message = "fs not found!"
+		default:
+			message = fmt.Sprintf("update fs failed!, error is %s", mds.FSStatusCode_name[int32(code)])
 		}
 		return NewRpcReultCmdError(statusCode, message)
 	}

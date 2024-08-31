@@ -32,18 +32,21 @@
 #include "curvefs/src/client/filesystem/meta.h"
 #include "curvefs/src/client/filesystem/filesystem.h"
 #include "curvefs/test/client/mock_metaserver_client.h"
-#include "curvefs/test/client/mock_inode_cache_manager.h"
-#include "curvefs/test/client/mock_dentry_cache_mamager.h"
+#include "curvefs/test/client/mock_inode_manager.h"
+#include "curvefs/test/client/mock_dentry_mamager.h"
 
 namespace curvefs {
 namespace client {
+namespace common {
+DECLARE_bool(fs_disableXattr);
+}
 namespace filesystem {
 
 using ::curvefs::client::common::KernelCacheOption;
 
 class DeferSyncBuilder {
  public:
-    using Callback = std::function<void(DeferSyncOption* option)>;
+    using Callback = std::function<void(bool* cto, DeferSyncOption* option)>;
 
     static DeferSyncOption DefaultOption() {
         return DeferSyncOption {
@@ -54,17 +57,18 @@ class DeferSyncBuilder {
 
  public:
     DeferSyncBuilder()
-        : option_(DefaultOption()),
+        : cto_(true),
+          option_(DefaultOption()),
           dentryManager_(std::make_shared<MockDentryCacheManager>()),
           inodeManager_(std::make_shared<MockInodeCacheManager>()) {}
 
     DeferSyncBuilder SetOption(Callback callback) {
-        callback(&option_);
+        callback(&cto_, &option_);
         return *this;
     }
 
     std::shared_ptr<DeferSync> Build() {
-        return std::make_shared<DeferSync>(option_);
+        return std::make_shared<DeferSync>(cto_, option_);
     }
 
     std::shared_ptr<MockDentryCacheManager> GetDentryManager() {
@@ -76,6 +80,7 @@ class DeferSyncBuilder {
     }
 
  private:
+    bool cto_;
     DeferSyncOption option_;
     std::shared_ptr<MockDentryCacheManager> dentryManager_;
     std::shared_ptr<MockInodeCacheManager> inodeManager_;
@@ -88,6 +93,7 @@ class DirCacheBuilder {
     static DirCacheOption DefaultOption() {
         return DirCacheOption {
             lruSize: 5000000,
+            timeoutSec: 3600,
         };
     }
 
@@ -191,13 +197,14 @@ class FileSystemBuilder {
         auto lookupCacheOption = LookupCacheOption {
             lruSize: 100000,
             negativeTimeoutSec: 0,
+            minUses: 1,
         };
         auto attrWatcherOption = AttrWatcherOption {
             lruSize: 5000000,
         };
 
         option.cto = true;
-        option.disableXattr = true;
+        option.disableXAttr = true;
         option.maxNameLength = 255;
         option.blockSize = 0x10000u;
         option.kernelCacheOption = kernelCacheOption;

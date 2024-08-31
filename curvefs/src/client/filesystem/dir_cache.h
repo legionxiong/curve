@@ -25,12 +25,15 @@
 
 #include <map>
 #include <list>
+#include <vector>
 #include <memory>
 
+#include "absl/container/btree_map.h"
 #include "src/common/lru_cache.h"
 #include "src/common/concurrent/concurrent.h"
 #include "curvefs/src/client/common/config.h"
 #include "curvefs/src/client/filesystem/meta.h"
+#include "curvefs/src/client/filesystem/metric.h"
 #include "curvefs/src/client/filesystem/message_queue.h"
 
 namespace curvefs {
@@ -56,6 +59,8 @@ class DirEntryList {
 
     void Iterate(IterateHandler handler);
 
+    void IterateRange(uint64_t offset, uint64_t count, IterateHandler handler);
+
     bool Get(Ino ino, DirEntry* dirEntry);
 
     bool UpdateAttr(Ino ino, const InodeAttr& attr);
@@ -71,8 +76,8 @@ class DirEntryList {
  private:
     RWLock rwlock_;
     TimeSpec mtime_;
-    std::list<DirEntry> entries_;
-    std::map<Ino, DirEntry*> attrs_;
+    std::vector<DirEntry> entries_;
+    absl::btree_map<Ino, uint32_t> index_;
 };
 
 class DirCache {
@@ -105,6 +110,7 @@ class DirCache {
     DirCacheOption option_;
     std::shared_ptr<LRUType> lru_;
     std::shared_ptr<MessageQueueType> mq_;
+    std::shared_ptr<DirCacheMetric> metric_;
 };
 
 }  // namespace filesystem

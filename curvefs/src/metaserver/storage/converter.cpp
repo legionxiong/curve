@@ -23,6 +23,7 @@
 #include <inttypes.h>
 #include <glog/logging.h>
 
+#include <bitset>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -40,12 +41,15 @@ namespace curvefs {
 namespace metaserver {
 namespace storage {
 
+using ::curve::common::SplitString;
 using ::curve::common::StringToUl;
 using ::curve::common::StringToUll;
-using ::curve::common::SplitString;
 using ::curvefs::common::PartitionInfo;
 
 static const char* const kDelimiter = ":";
+// Key4TxWrite: kTypeTxWrite:parentInodeId:name/ts
+// if name contains ":" will not work if use ":" kDelimiter
+static const char* const kTxDelimiter = "/";
 
 static bool CompareType(const std::string& str, KEY_TYPE keyType) {
     uint32_t n;
@@ -54,6 +58,7 @@ static bool CompareType(const std::string& str, KEY_TYPE keyType) {
 
 NameGenerator::NameGenerator(uint32_t partitionId)
     : tableName4Inode_(Format(kTypeInode, partitionId)),
+      tableName4DelInode_(Format(kTypeDelInode, partitionId)),
       tableName4DeallocatableIndoe_(
           Format(kTypeDeallocatableInode, partitionId)),
       tableName4DeallocatableBlockGroup_(
@@ -61,10 +66,20 @@ NameGenerator::NameGenerator(uint32_t partitionId)
       tableName4S3ChunkInfo_(Format(kTypeS3ChunkInfo, partitionId)),
       tableName4Dentry_(Format(kTypeDentry, partitionId)),
       tableName4VolumeExtent_(Format(kTypeVolumeExtent, partitionId)),
-      tableName4InodeAuxInfo_(Format(kTypeInodeAuxInfo, partitionId)) {}
+      tableName4InodeAuxInfo_(Format(kTypeInodeAuxInfo, partitionId)),
+      tableName4AppliedIndex_(Format(kTypeAppliedIndex, partitionId)),
+      tableName4Transaction_(Format(kTypeTransaction, partitionId)),
+      tableName4InodeCount_(Format(kTypeInodeCount, partitionId)),
+      tableName4DentryCount_(Format(kTypeDentryCount, partitionId)),
+      tableName4TxLock_(Format(kTypeTxLock, partitionId)),
+      tableName4TxWrite_(Format(kTypeTxWrite, partitionId)) {}
 
 std::string NameGenerator::GetInodeTableName() const {
     return tableName4Inode_;
+}
+
+std::string NameGenerator::GetDelInodeTableName() const {
+    return tableName4DelInode_;
 }
 
 std::string NameGenerator::GetDeallocatableInodeTableName() const {
@@ -91,51 +106,79 @@ std::string NameGenerator::GetInodeAuxInfoTableName() const {
     return tableName4InodeAuxInfo_;
 }
 
+std::string NameGenerator::GetAppliedIndexTableName() const {
+    return tableName4AppliedIndex_;
+}
+
+std::string NameGenerator::GetTransactionTableName() const {
+    return tableName4Transaction_;
+}
+
+std::string NameGenerator::GetInodeCountTableName() const {
+    return tableName4InodeCount_;
+}
+
+std::string NameGenerator::GetDentryCountTableName() const {
+    return tableName4DentryCount_;
+}
+
+std::string NameGenerator::GetTxLockTableName() const {
+    return tableName4TxLock_;
+}
+
+std::string NameGenerator::GetTxWriteTableName() const {
+    return tableName4TxWrite_;
+}
+
 size_t NameGenerator::GetFixedLength() {
-    size_t length = sizeof(kTypeInode) + sizeof(uint32_t) + strlen(kDelimiter);
-    LOG(INFO) << "Tablename fixed length is " << length;
-    return length;
+    return sizeof(kTypeInode) + sizeof(uint32_t) + strlen(kDelimiter);
 }
 
 std::string NameGenerator::Format(KEY_TYPE type, uint32_t partitionId) {
     char buf[sizeof(partitionId)];
-    std::memcpy(buf, reinterpret_cast<char*>(&partitionId),
-        sizeof(buf));
-    return absl::StrCat(type, kDelimiter,
-        absl::string_view(buf, sizeof(buf)));
+    std::memcpy(buf, reinterpret_cast<char*>(&partitionId), sizeof(buf));
+    return absl::StrCat(type, kDelimiter, absl::string_view(buf, sizeof(buf)));
 }
 
-Key4Inode::Key4Inode()
-    : fsId(0), inodeId(0) {}
+KEY_TYPE NameGenerator::DecodeKeyType(const std::string& name) {
+    std::vector<std::string> items;
+    SplitString(name, kDelimiter, &items);
+    if (items.size() < 2) {
+        return KEY_TYPE::kTypeUnknown;
+    }
+    return static_cast<KEY_TYPE>(std::stoi(items[0]));
+}
+
+Key4Inode::Key4Inode() : fsId(0), inodeId(0) {}
 
 Key4Inode::Key4Inode(uint32_t fsId, uint64_t inodeId)
-        : fsId(fsId), inodeId(inodeId) {}
+    : fsId(fsId), inodeId(inodeId) {}
 
-Key4Inode::Key4Inode(const Inode& inode):
-    fsId(inode.fsid()), inodeId(inode.inodeid()) {}
+Key4Inode::Key4Inode(const Inode& inode)
+    : fsId(inode.fsid()), inodeId(inode.inodeid()) {}
 
 bool Key4Inode::operator==(const Key4Inode& rhs) {
     return fsId == rhs.fsId && inodeId == rhs.inodeId;
 }
 
 std::string Key4Inode::SerializeToString() const {
-    return absl::StrCat(keyType_, ":", fsId, ":", inodeId);
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, inodeId);
 }
 
 bool Key4Inode::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 3 && CompareType(items[0], keyType_) &&
-        StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId);
+           StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId);
 }
 
 std::string Prefix4AllInode::SerializeToString() const {
-    return absl::StrCat(keyType_, ":");
+    return absl::StrCat(keyType_, kDelimiter);
 }
 
 bool Prefix4AllInode::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 1 && CompareType(items[0], keyType_);
 }
 
@@ -150,12 +193,10 @@ Key4S3ChunkInfoList::Key4S3ChunkInfoList()
       lastChunkId(0),
       size(0) {}
 
-Key4S3ChunkInfoList::Key4S3ChunkInfoList(uint32_t fsId,
-                                         uint64_t inodeId,
+Key4S3ChunkInfoList::Key4S3ChunkInfoList(uint32_t fsId, uint64_t inodeId,
                                          uint64_t chunkIndex,
                                          uint64_t firstChunkId,
-                                         uint64_t lastChunkId,
-                                         uint64_t size)
+                                         uint64_t lastChunkId, uint64_t size)
     : fsId(fsId),
       inodeId(inodeId),
       chunkIndex(chunkIndex),
@@ -164,43 +205,42 @@ Key4S3ChunkInfoList::Key4S3ChunkInfoList(uint32_t fsId,
       size(size) {}
 
 std::string Key4S3ChunkInfoList::SerializeToString() const {
-    return absl::StrCat(keyType_, ":", fsId, ":", inodeId, ":",
-        chunkIndex, ":", absl::StrFormat("%020" PRIu64"", firstChunkId), ":",
-        absl::StrFormat("%020" PRIu64"", lastChunkId), ":", size);
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, inodeId,
+        kDelimiter, chunkIndex, kDelimiter,
+        absl::StrFormat("%020" PRIu64 "", firstChunkId), kDelimiter,
+        absl::StrFormat("%020" PRIu64 "", lastChunkId), kDelimiter,
+        size);
 }
 
 bool Key4S3ChunkInfoList::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 7 && CompareType(items[0], keyType_) &&
-        StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId) &&
-        StringToUll(items[3], &chunkIndex) &&
-        StringToUll(items[4], &firstChunkId) &&
-        StringToUll(items[5], &lastChunkId) &&
-        StringToUll(items[6], &size);
+           StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId) &&
+           StringToUll(items[3], &chunkIndex) &&
+           StringToUll(items[4], &firstChunkId) &&
+           StringToUll(items[5], &lastChunkId) && StringToUll(items[6], &size);
 }
 
 Prefix4ChunkIndexS3ChunkInfoList::Prefix4ChunkIndexS3ChunkInfoList()
     : fsId(0), inodeId(0), chunkIndex(0) {}
 
 Prefix4ChunkIndexS3ChunkInfoList::Prefix4ChunkIndexS3ChunkInfoList(
-    uint32_t fsId,
-    uint64_t inodeId,
-    uint64_t chunkIndex)
+    uint32_t fsId, uint64_t inodeId, uint64_t chunkIndex)
     : fsId(fsId), inodeId(inodeId), chunkIndex(chunkIndex) {}
 
 std::string Prefix4ChunkIndexS3ChunkInfoList::SerializeToString() const {
-    return absl::StrCat(keyType_, ":", fsId, ":", inodeId, ":",
-        chunkIndex, ":");
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, inodeId,
+        kDelimiter, chunkIndex, kDelimiter);
 }
 
 bool Prefix4ChunkIndexS3ChunkInfoList::ParseFromString(
     const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 4 && CompareType(items[0], keyType_) &&
-        StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId) &&
-        StringToUll(items[3], &chunkIndex);
+           StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId) &&
+           StringToUll(items[3], &chunkIndex);
 }
 
 Prefix4InodeS3ChunkInfoList::Prefix4InodeS3ChunkInfoList()
@@ -211,50 +251,46 @@ Prefix4InodeS3ChunkInfoList::Prefix4InodeS3ChunkInfoList(uint32_t fsId,
     : fsId(fsId), inodeId(inodeId) {}
 
 std::string Prefix4InodeS3ChunkInfoList::SerializeToString() const {
-    return absl::StrCat(keyType_, ":", fsId, ":", inodeId, ":");
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter,
+        inodeId, kDelimiter);
 }
 
 bool Prefix4InodeS3ChunkInfoList::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 3 && CompareType(items[0], keyType_) &&
-        StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId);
+           StringToUl(items[1], &fsId) && StringToUll(items[2], &inodeId);
 }
 
 std::string Prefix4AllS3ChunkInfoList::SerializeToString() const {
-    return absl::StrCat(kTypeS3ChunkInfo, ":");
+    return absl::StrCat(kTypeS3ChunkInfo, kDelimiter);
 }
 
 bool Prefix4AllS3ChunkInfoList::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 1 && CompareType(items[0], keyType_);
 }
 
-Key4Dentry::Key4Dentry(uint32_t fsId,
-                       uint64_t parentInodeId,
+Key4Dentry::Key4Dentry(uint32_t fsId, uint64_t parentInodeId,
                        const std::string& name)
     : fsId(fsId), parentInodeId(parentInodeId), name(name) {}
 
 std::string Key4Dentry::SerializeToString() const {
-    return absl::StrCat(keyType_, kDelimiter, fsId,
-                        kDelimiter, parentInodeId,
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, parentInodeId,
                         kDelimiter, name);
 }
 
 bool Key4Dentry::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
-    if (items.size() < 3 ||
-        !CompareType(items[0], keyType_) ||
+    SplitString(value, kDelimiter, &items);
+    if (items.size() < 3 || !CompareType(items[0], keyType_) ||
         !StringToUl(items[1], &fsId) ||
         !StringToUll(items[2], &parentInodeId)) {
         return false;
     }
 
-    size_t prefixLength = items[0].size() +
-                          items[1].size() +
-                          items[2].size() +
+    size_t prefixLength = items[0].size() + items[1].size() + items[2].size() +
                           3 * strlen(kDelimiter);
     if (value.size() < prefixLength) {
         return false;
@@ -268,30 +304,91 @@ Prefix4SameParentDentry::Prefix4SameParentDentry(uint32_t fsId,
     : fsId(fsId), parentInodeId(parentInodeId) {}
 
 std::string Prefix4SameParentDentry::SerializeToString() const {
-    return absl::StrCat(keyType_, kDelimiter, fsId,
-                        kDelimiter, parentInodeId,
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, parentInodeId,
                         kDelimiter);
 }
 
 bool Prefix4SameParentDentry::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 3 && CompareType(items[0], keyType_) &&
            StringToUl(items[1], &fsId) && StringToUll(items[2], &parentInodeId);
 }
 
 std::string Prefix4AllDentry::SerializeToString() const {
-    return absl::StrCat(keyType_, ":");
+    return absl::StrCat(keyType_, kDelimiter);
 }
 
 bool Prefix4AllDentry::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 1 && CompareType(items[0], keyType_);
 }
 
-Key4VolumeExtentSlice::Key4VolumeExtentSlice(uint32_t fsId,
-                                             uint64_t inodeId,
+std::string Key4TxWrite::SerializeToString() const {
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, parentInodeId,
+                        kDelimiter, name, kTxDelimiter, ts);
+}
+
+bool Key4TxWrite::ParseFromString(const std::string& value) {
+    // 1. split dentryKey and ts
+    std::vector<std::string> keys;
+    SplitString(value, kTxDelimiter, &keys);
+    if (keys.size() != 2) {
+        return false;
+    }
+    if (!StringToUll(keys[1], &ts)) {
+        return false;
+    }
+
+    // 2. decode dentryKey
+    std::vector<std::string> items;
+    SplitString(keys[0], kDelimiter, &items);
+    if (items.size() < 3 || !CompareType(items[0], keyType_) ||
+        !StringToUl(items[1], &fsId) ||
+        !StringToUll(items[2], &parentInodeId)) {
+        return false;
+    }
+
+    size_t prefixLength = items[0].size() + items[1].size() + items[2].size() +
+                          3 * strlen(kDelimiter);
+    if (keys[0].size() < prefixLength) {
+        return false;
+    }
+    name = keys[0].substr(prefixLength);
+    return true;
+}
+
+std::string Prefix4TxWrite::SerializeToString() const {
+    return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, parentInodeId,
+                        kDelimiter, name, kTxDelimiter);
+}
+
+bool Prefix4TxWrite::ParseFromString(const std::string& value) {
+    std::vector<std::string> keys;
+    SplitString(value, kTxDelimiter, &keys);
+    if (keys.size() != 1) {
+        return false;
+    }
+
+    std::vector<std::string> items;
+    SplitString(value, kDelimiter, &items);
+    if (items.size() < 3 || !CompareType(items[0], keyType_) ||
+        !StringToUl(items[1], &fsId) ||
+        !StringToUll(items[2], &parentInodeId)) {
+        return false;
+    }
+
+    size_t prefixLength = items[0].size() + items[1].size() + items[2].size() +
+                          3 * strlen(kDelimiter);
+    if (value.size() < prefixLength) {
+        return false;
+    }
+    name = value.substr(prefixLength);
+    return true;
+}
+
+Key4VolumeExtentSlice::Key4VolumeExtentSlice(uint32_t fsId, uint64_t inodeId,
                                              uint64_t offset)
     : fsId_(fsId), inodeId_(inodeId), offset_(offset) {}
 
@@ -320,7 +417,7 @@ std::string Prefix4InodeVolumeExtent::SerializeToString() const {
                         kDelimiter);
 }
 
-bool Prefix4InodeVolumeExtent::ParseFromString(const std::string &value) {
+bool Prefix4InodeVolumeExtent::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
     SplitString(value, kDelimiter, &items);
     return items.size() == 3 && CompareType(items[0], keyType_) &&
@@ -331,14 +428,13 @@ std::string Prefix4AllVolumeExtent::SerializeToString() const {
     return absl::StrCat(keyType_, kDelimiter);
 }
 
-bool Prefix4AllVolumeExtent::ParseFromString(const std::string &value) {
+bool Prefix4AllVolumeExtent::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
     SplitString(value, kDelimiter, &items);
     return items.size() == 1 && CompareType(items[0], keyType_);
 }
 
-Key4InodeAuxInfo::Key4InodeAuxInfo(uint32_t fsId,
-                                   uint64_t inodeId)
+Key4InodeAuxInfo::Key4InodeAuxInfo(uint32_t fsId, uint64_t inodeId)
     : fsId(fsId), inodeId(inodeId) {}
 
 std::string Key4InodeAuxInfo::SerializeToString() const {
@@ -356,7 +452,7 @@ std::string Key4DeallocatableBlockGroup::SerializeToString() const {
     return absl::StrCat(keyType_, kDelimiter, fsId, kDelimiter, volumeOffset);
 }
 
-bool Key4DeallocatableBlockGroup::ParseFromString(const std::string &value) {
+bool Key4DeallocatableBlockGroup::ParseFromString(const std::string& value) {
     std::vector<std::string> items;
     SplitString(value, kDelimiter, &items);
     return items.size() == 3 && CompareType(items[0], keyType_) &&
@@ -364,13 +460,13 @@ bool Key4DeallocatableBlockGroup::ParseFromString(const std::string &value) {
 }
 
 std::string Prefix4AllDeallocatableBlockGroup::SerializeToString() const {
-    return absl::StrCat(keyType_, ":");
+    return absl::StrCat(keyType_, kDelimiter);
 }
 
 bool Prefix4AllDeallocatableBlockGroup::ParseFromString(
-    const std::string &value) {
+    const std::string& value) {
     std::vector<std::string> items;
-    SplitString(value, ":", &items);
+    SplitString(value, kDelimiter, &items);
     return items.size() == 1 && CompareType(items[0], keyType_);
 }
 

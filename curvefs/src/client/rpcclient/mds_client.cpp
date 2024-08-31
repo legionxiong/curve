@@ -20,12 +20,16 @@
  * Author: lixiaocui
  */
 
+#include "curvefs/src/client/rpcclient/mds_client.h"
+
 #include <map>
 #include <utility>
 #include <vector>
+#include "absl/strings/str_join.h"
 
 #include "curvefs/proto/space.pb.h"
-#include "curvefs/src/client/rpcclient/mds_client.h"
+#include "curvefs/src/client/rpcclient/fsdelta_updater.h"
+#include "curvefs/src/client/rpcclient/fsquota_checker.h"
 #include "curvefs/src/common/metric_utils.h"
 
 namespace curvefs {
@@ -497,12 +501,11 @@ FSStatusCode MdsClientImpl::AllocS3ChunkId(uint32_t fsId, uint32_t idNum,
     return ReturnError(rpcexcutor_.DoRPCTask(task, mdsOpt_.mdsMaxRetryMS));
 }
 
-FSStatusCode
-MdsClientImpl::RefreshSession(const std::vector<PartitionTxId> &txIds,
-                              std::vector<PartitionTxId> *latestTxIdList,
-                              const std::string& fsName,
-                              const Mountpoint& mountpoint,
-                              std::atomic<bool>* enableSumInDir) {
+FSStatusCode MdsClientImpl::RefreshSession(
+    const std::vector<PartitionTxId> &txIds,
+    std::vector<PartitionTxId> *latestTxIdList, const std::string &fsName,
+    const Mountpoint &mountpoint, std::atomic<bool> *enableSumInDir,
+    const std::string &mdsAddrs, std::string *mdsAddrsOverride) {
     auto task = RPCTask {
         (void)addrindex;
         (void)rpctimeoutMS;
@@ -513,6 +516,12 @@ MdsClientImpl::RefreshSession(const std::vector<PartitionTxId> &txIds,
         *request.mutable_txids() = {txIds.begin(), txIds.end()};
         request.set_fsname(fsName);
         *request.mutable_mountpoint() = mountpoint;
+        curvefs::mds::FsDelta fsDelta;
+        fsDelta.set_bytes(
+            FsDeltaUpdater::GetInstance().GetDeltaBytesAndReset());
+        *request.mutable_fsdelta() = std::move(fsDelta);
+        request.set_mdsaddrs(mdsAddrs);
+
         mdsbasecli_->RefreshSession(request, &response, cntl, channel);
         if (cntl->Failed()) {
             mdsClientMetric_.refreshSession.eps.count << 1;
@@ -538,11 +547,33 @@ MdsClientImpl::RefreshSession(const std::vector<PartitionTxId> &txIds,
             LOG(INFO) << "update enableSumInDir to "
                       << response.enablesumindir();
         }
-
+        if (response.has_fscapacity() && response.has_fsusedbytes()) {
+            FsQuotaChecker::GetInstance().UpdateQuotaCache(
+                response.fscapacity(), response.fsusedbytes());
+        }
+        if (response.has_mdsaddrsoverride()) {
+            *mdsAddrsOverride = response.mdsaddrsoverride();
+        }
         return ret;
     };
 
     return ReturnError(rpcexcutor_.DoRPCTask(task, mdsOpt_.mdsMaxRetryMS));
+}
+
+std::string MdsClientImpl::GetMdsAddrs() {
+    auto option = rpcexcutor_.GetOption();
+    return absl::StrJoin(option.addrs, ",");
+}
+
+void MdsClientImpl::SetMdsAddrs(const std::string &mdsAddrs) {
+    std::vector<std::string> mdsAddrsVec = {};
+    curve::common::SplitString(mdsAddrs, ",", &mdsAddrsVec);
+    if (!mdsAddrsVec.empty()) {
+        auto option = rpcexcutor_.GetOption();
+        option.addrs = mdsAddrsVec;
+        rpcexcutor_.SetOption(option);
+        LOG(WARNING) << "update mdsAddrs to " << mdsAddrs;
+    }
 }
 
 FSStatusCode MdsClientImpl::GetLatestTxId(const GetLatestTxIdRequest& request,
@@ -670,6 +701,38 @@ FSStatusCode MdsClientImpl::CommitTxWithLock(
     request.set_txsequence(sequence);
     *request.mutable_partitiontxids() = { txIds.begin(), txIds.end() };
     return CommitTx(request);
+}
+
+FSStatusCode MdsClientImpl::Tso(uint64_t* ts, uint64_t* timestamp) {
+    auto task = RPCTask {
+        (void)addrindex;
+        (void)rpctimeoutMS;
+        mdsClientMetric_.tso.qps.count << 1;
+        LatencyUpdater updater(&mdsClientMetric_.tso.latency);
+        TsoRequest request;
+        TsoResponse response;
+        mdsbasecli_->Tso(request, &response, cntl, channel);
+        if (cntl->Failed()) {
+            mdsClientMetric_.tso.eps.count << 1;
+            LOG(WARNING) << "Tso Failed, errorcode = " << cntl->ErrorCode()
+                         << ", error content:" << cntl->ErrorText()
+                         << ", log id = " << cntl->log_id();
+            return -cntl->ErrorCode();
+        }
+
+        FSStatusCode ret = response.statuscode();
+        if (ret != FSStatusCode::OK) {
+            LOG(ERROR) << "Tso: errcode = " << ret
+                       << ", errmsg = " << FSStatusCode_Name(ret);
+            return ret;
+        } else {
+            *ts = response.ts();
+            *timestamp = response.timestamp();
+        }
+        return ret;
+    };
+    // for rpc error or failed/timeout, we will retry until success
+    return ReturnError(rpcexcutor_.DoRPCTask(task, 0));
 }
 
 FSStatusCode MdsClientImpl::ReturnError(int retcode) {

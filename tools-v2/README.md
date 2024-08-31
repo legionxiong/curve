@@ -24,6 +24,7 @@ A tool for CurveFS & CurveBs.
         - [list mountpoint](#list-mountpoint)
         - [list partition](#list-partition)
         - [list topology](#list-topology)
+        - [list space usage](#list-space-usage)
       - [query](#query)
         - [query copyset](#query-copyset)
         - [query fs](#query-fs)
@@ -42,23 +43,28 @@ A tool for CurveFS & CurveBs.
         - [usage inode](#usage-inode)
         - [usage metadata](#usage-metadata)
       - [warmup](#warmup)
-      - [warmup add](#warmup-add)
+        - [warmup add](#warmup-add)
+        - [warmup cancel](#warmup-cancel)
+        - [warmup list](#warmup-list)
+        - [warmup query](#warmup-query)
     - [bs](#bs)
       - [list](#list-1)
-          - [list logical-pool](#list-logical-pool)
-          - [list server](#list-server)
-          - [list client](#list-client)
-          - [list dir](#list-dir)
-          - [list space](#list-space)
-          - [list chunkserver](#list-chunkserver)
-          - [list scan-status](#list-scan-status)
-          - [list may-broken-vol](#list-may-broken-vol)
+        - [list logical-pool](#list-logical-pool)
+        - [list server](#list-server)
+        - [list client](#list-client)
+        - [list dir](#list-dir)
+        - [list space](#list-space)
+        - [list chunkserver](#list-chunkserver)
+        - [list scan-status](#list-scan-status)
+        - [list may-broken-vol](#list-may-broken-vol)
+        - [list snapshot](#list-snapshot)
       - [clean-recycle](#clean-recycle)
       - [query](#query-1)
-          - [query file](#query-file)
-          - [query chunk](#query-chunk)
-          - [query segment](#query-segment)
+        - [query file](#query-file)
+        - [query chunk](#query-chunk)
+        - [query segment](#query-segment)
         - [query scan-status](#query-scan-status)
+        - [query volume clone-recover](#query-volume-clone-recover)
       - [status](#status-1)
         - [status etcd](#status-etcd-1)
         - [status mds](#status-mds-1)
@@ -68,6 +74,10 @@ A tool for CurveFS & CurveBs.
         - [status copyset](#status-copyset-1)
       - [delete](#delete-1)
         - [delete peer](#delete-peer)
+        - [delete volume](#delete-volume)
+          - [delete volume clone](#delete-volume-clone)
+          - [delete volume recover](#delete-volume-recover)
+        - [delete snapshot](#delete-snapshot)
       - [update](#update)
         - [update peer](#update-peer)
         - [update leader](#update-leader)
@@ -76,15 +86,24 @@ A tool for CurveFS & CurveBs.
         - [update scan-state](#update-scan-state)
         - [update copyset availflag](#update-copyset-availflag)
         - [update leader-schedule](#update-leader-schedule)
+        - [update volume flatten](#update-volume-flatten)
       - [create](#create-1)
         - [create file](#create-file)
         - [create dir](#create-dir)
+        - [create volume snapshot](#create-volume-snapshot)
       - [check](#check-1)
         - [check copyset](#check-copyset-1)
         - [check chunkserver](#check-chunkserver)
         - [check server](#check-server)
+        - [check consistency](#check-consistency)
       - [snapshot](#snapshot)
         - [snapshot copyset](#snapshot-copyset)
+      - [stop](#stop)
+        - [stop snapshot](#stop-snapshot)
+      - [recover](#recover)
+        - [recover volume](#recover-volume)
+      - [export](#export)
+        - [export target](#export-target)
   - [Comparison of old and new commands](#comparison-of-old-and-new-commands)
     - [curve fs](#curve-fs)
     - [curve bs](#curve-bs)
@@ -530,6 +549,26 @@ Output:
 +----+------------+--------------------+------------+-----------------------+
 ```
 
+##### list space usage
+
+list the space usage of the curvefs
+
+Usage:
+
+```shell
+curve fs list space --fs test
+```
+
+Output:
+
+```shell
++--------+----------+---------+----------+
+| FSNAME | CAPACITY |  USED   | INODENUM |
++--------+----------+---------+----------+
+| test   | 10PB     | 6.71GiB | 7313     |
++--------+----------+---------+----------+
+```
+
 #### query
 
 ##### query copyset
@@ -872,19 +911,70 @@ Output:
 
 #### warmup
 
+When using object storage with CurveFS, our data is stored remotely on platforms like MinIO or AWS S3.
+Each time we access a file within the CurveFS mount, we have to fetch the content from the remote platform.
+This process involves overhead like network connections, file writing, and memory access.
+
+To alleviate the wait when users require a file, the warmup tool allows users to pre-fetch files of interest in advance.
+This way, the needed files are readily available when users need them.
+
 #### warmup add
 
-warmup a file(directory), or given a list file contains a list of files(directories) that you want to warmup.
+Initiate warming up for either a file or directory, or provide a single file (file list) containing a list of files and directories you want to warm up.
 
 Usage:
 
 ```shell
+curve fs warmup add [--filelist] <target>
 curve fs warmup add /mnt/curvefs/warmup
 curve fs warmup add --filelist /mnt/curvefs/warmup.list
 ```
 
 > `curve fs warmup add /mnt/curvefs/warmup` will warmup a file(directory).
-> /mnt/curvefs/warmup.list
+
+> `curve fs warmup add --filelist /mnt/curvefs/warmup.list` will warmup a filelist.
+
+#### warmup cancel
+
+Cancel a warmup job that's currently in progress for either a single file or directory, or for a list of files and directories contained within a file list.
+
+Usage:
+
+```shell
+curve fs warmup cancel [--filelist] <target>
+curve fs warmup cancel /mnt/curvefs/warmup
+curve fs warmup cancel --filelist /mnt/curvefs/warmup.list
+```
+
+> `curve fs warmup cancel /mnt/curvefs/warmup` will cancel a warmup job running on the speicfied file(directory).
+
+> `curve fs warmup cancel --filelist /mnt/curvefs/warmup.list` will cancel a warmup job running on the speicfied filelist.
+
+#### warmup list
+
+Display a list of all currently active warmup jobs initiated within the specified CurveFS filesystem.
+
+Usage:
+
+```shell
+curve fs warmup list <curvefs mount path>
+curve fs warmup list /mnt/curvefs
+```
+
+> `curve fs warmup list /mnt/curvefs` will list out all the running warmup jobs within the specified CurveFS filesystem mount path.
+
+#### warmup query
+
+Check the status of a warmup job for either a single file or directory, or for a list of files and directories contained within a file list.
+
+Usage:
+
+```shell
+curve fs warmup query <target>
+curve fs warmup query /mnt/curvefs/warmup
+```
+
+> `curve fs warmup query /mnt/curvefs/warmup` will display the warmup job progress running on the specified target.
 
 ### bs
 
@@ -1248,6 +1338,27 @@ Output:
 +----------+
 ```
 
+###### list snapshot
+
+list curvebs snapshot
+
+Usage:
+
+```bash
+curve bs list snapshot
+```
+
+Output:
+
+```bash
++--------------------------------------+--------------+------+--------+----------------+-------------+----------+---------------------+---------------+
+|              SNAPSHOTID              | SNAPSHOTNAME | USER | STATUS | SNAPSHOTSEQNUM | FILELENGTH  | PROGRESS |     CREATETIME      |     FILE      |
++--------------------------------------+--------------+------+--------+----------------+-------------+----------+---------------------+---------------+
+| 807fdac2-5b47-42dc-b884-a4f33b0f2a1a | testsnap     | root | 0      | 1              | 10737418240 | 100      | 2023-10-15 16:16:31 | /test/test111 |
++--------------------------------------+--------------+------+--------+----------------+-------------+----------+---------------------+               +
+| 204a5316-99cd-44b7-bc58-be6a547b8469 | testsnap1    | root | 0      | 2              | 10737418240 | 100      | 2023-10-25 09:22:12 |               |
+```
+
 #### clean-recycle
 
 clean the recycle bin 
@@ -1358,6 +1469,24 @@ Output:
 +-------------+-----------+-------+-------------+--------------------+
 | 1           | 1         | false | 1684425801  | true               |
 +-------------+-----------+-------+-------------+--------------------+
+```
+
+
+##### query volume clone-recover
+query volume clone and recover in curvebs cluster
+
+Usage:
+```bash
+curve bs query volume clone-recover
+```
+
+Output:
+```bash
++------+--------------------------------------+--------------------------------------+----------+-------+----------+--------+----------+--------+----------+---------------------+
+| USER |                 SRC                  |               TASK ID                | TASKTYPE | FILE  | FILETYPE | ISLAZY | NEXTSTEP | STATUS | PROGRESS |        TIME         |
++------+--------------------------------------+--------------------------------------+----------+-------+----------+--------+----------+--------+----------+---------------------+
+| root | a19b5e5e-b306-488f-8e6d-d87282c869cb | d26e27a8-fcbd-4f7a-adf8-53795217cbb0 |  clone   | /root |   file   | false  |   end    |  done  |    1     | 2006-01-02 15:04:05 |
++------+--------------------------------------+--------------------------------------+----------+-------+----------+--------+----------+--------+----------+---------------------+
 ```
 
 #### status
@@ -1525,6 +1654,70 @@ Output:
 +------------------+------------------+---------+---------+--------+
 ```
 
+##### delete volume
+
+###### delete volume clone
+
+delete volume clone tasks in curvebs cluster
+
+Usage:
+
+```bash
+curve bs delete volume clone
+```
+
+Output:
+
+```bash
++------+--------------------------------------+--------------------------------------+-------+---------+--------+
+| USER |                 SRC                  |               TASK ID                | FILE  | RESULT  | REASON |
++------+--------------------------------------+--------------------------------------+-------+---------+--------+
+| root | a19b5e5e-b306-488f-8e6d-d87282c869cb | d26e27a8-fcbd-4f7a-adf8-53795217cbb0 | /root | success |        |
++------+--------------------------------------+--------------------------------------+-------+---------+--------+
+```
+
+###### delete volume recover
+
+delete volume recover tasks in curvebs cluster
+
+Usage:
+
+```bash
+curve bs delete volume recover
+```
+
+Output:
+
+```bash
++------+--------------------------------------+--------------------------------------+-------+---------+--------+
+| USER |                 SRC                  |               TASK ID                | FILE  | RESULT  | REASON |
++------+--------------------------------------+--------------------------------------+-------+---------+--------+
+| root | a19b5e5e-b306-488f-8e6d-d87282c869cb | 9dfa8699-a275-4891-8ec2-e447a0ccc77c | /root | success |        |
++------+--------------------------------------+--------------------------------------+-------+---------+--------+
+```
+
+##### delete snapshot
+
+delete the snapshot in curvebs
+
+Usage:
+
+```shell
+curve bs delete snapshot --path /test111/test222 --user root --snapshotFailed=false
+```
+
+Output:
+
+```shell
++--------------------------------------+--------------+---------+--------+
+|              SNAPSHOTID              | SNAPSHOTNAME | RESULT  | REASON |
++--------------------------------------+--------------+---------+--------+
+| 3b9d14c2-79a2-4454-9b0a-6cb7477956db | testsnap1    | success | null   |
++--------------------------------------+--------------+---------+--------+
+| 2a94fb51-e985-4e98-a34c-f02aef8e97b5 | testsnap2    | success | null   |
++--------------------------------------+--------------+---------+--------+
+```
+
 #### update
 
 ##### update peer
@@ -1654,6 +1847,24 @@ Output:
 +---------+--------+
 ```
 
+##### update volume flatten
+
+update volume flatten in curvebs cluster
+
+Usage:
+```bash
+curve bs update volume --user root --taskid d26e27a8-fcbd-4f7a-adf8-53795217cbb0
+```
+
+Output:
+```
++------+--------------------------------------+---------+            
+| USER |               TASK ID                | RESULT  |            
++------+--------------------------------------+---------+            
+| root | d26e27a8-fcbd-4f7a-adf8-53795217cbb0 | success |            
++------+--------------------------------------+---------+  
+```
+
 #### create
 
 ##### create file
@@ -1690,6 +1901,24 @@ Output:
 +---------+
 | success |
 +---------+
+```
+
+##### create volume snapshot
+
+create snapshot
+
+Usage:
+```bash
+curve bs create volume snapshot --user root --filename test --snapshotname snap-test
+```
+
+Output:
+```
++------+----------+--------------+
+| USER | FILENAME | SNAPSHOTNAME |
++------+----------+---------------
+| root |   test   |  snap-test   |
++------+----------+--------------+
 ```
 
 #### check
@@ -1754,6 +1983,26 @@ Output:
 +--------+-----------+-------+------------------+
 ```
 
+##### check consistency
+
+check the file consistency
+
+Usage:
+
+```shell
+curve bs check consistency --path /test
+```
+
+Output:
+
+```shell
++--------+--------+------------+
+|  NAME  | STATUS |   EXPLAIN  |
++--------+--------+------------+
+| /test  |  ok    |      -     |
++--------+--------+------------+
+```
+
 #### snapshot
 
 ##### snapshot copyset
@@ -1790,6 +2039,117 @@ Output:
 | **.*.*.**:8202 |         |
 +----------------+---------+
 ```
+
+#### stop
+
+##### stop snapshot
+
+stop snapshot in curve bs
+
+Usage:
+
+```shell
+curve bs stop snapshot
+```
+
+Output:
+
+```shell
++--------------------------------------+--------------+---------+--------+
+|              SNAPSHOTID              | SNAPSHOTNAME | RESULT  | REASON |
++--------------------------------------+--------------+---------+--------+
+| 3b9d14c2-79a2-4454-9b0a-6cb7477956db | testsnap1    | success | null   |
++--------------------------------------+--------------+---------+--------+
+| 2a94fb51-e985-4e98-a34c-f02aef8e97b5 | testsnap2    | success | null   |
++--------------------------------------+--------------+---------+--------+
+```
+#### export 
+
+##### export target 
+
+export services and clients in the bs cluster
+
+Usage:
+
+```shell
+curve bs export target 
+```
+
+Output:
+
+```shell
+[
+  {
+    "label": {
+      "job": "etcd"
+    },
+    "targets": [
+      "172.21.0.13:23790",
+      "172.21.0.13:23791",
+      "172.21.0.13:23792"
+    ]
+  },
+  {
+    "label": {
+      "job": "mds"
+    },
+    "targets": [
+      "172.21.0.13:6700",
+      "172.21.0.13:6701",
+      "172.21.0.13:6702"
+    ]
+  },
+  {
+    "label": {
+      "job": "chunkserver"
+    },
+    "targets": [
+      "172.21.0.13:8200",
+      "172.21.0.13:8202",
+      "172.21.0.13:8201"
+    ]
+  },
+  {
+    "label": {
+      "job": "snapshotcloneserver"
+    },
+    "targets": [
+      "172.21.0.13:5550",
+      "172.21.0.13:5551",
+      "172.21.0.13:5552"
+    ]
+  },
+  {
+    "label": {
+      "job": "client"
+    },
+    "targets": [
+      "172.21.0.13:9000"
+    ]
+  }
+]
+```
+
+#### recover
+
+##### recover volume
+
+recover volume from recycleBin
+
+Usage:
+```shell
+curve bs recover volume --path /test/path --user root 
+```
+
+Output:
+```
++-----------+---------+
+| FILENAME  | RESULT  | 
++-----------+---------+
+| test/path | success |
++-----------+---------+
+```
+
 
 ## Comparison of old and new commands
 
@@ -1854,8 +2214,8 @@ Output:
 | curve_ops_tool list-may-broken-vol   | curve bs list may-broken-vol      |
 | curve_ops_tool rapid-leader-schedule | curve bs update leader-schedule   |
 | curve_ops_tool do-snapshot-all       | curve bs snapshot --all           |
-| curve_ops_tool check-chunkserver     | curbe bs check chunkserver        |
+| curve_ops_tool check-chunkserver     | curve bs check chunkserver        |
 | curve_ops_tool status                |                                   |
-| curve_ops_tool check-consistency     |                                   |
+| curve_ops_tool check-consistency     | curve bs check consistency        |
 | curve_ops_tool check-server          | curve bs check server             |
 

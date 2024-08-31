@@ -107,23 +107,15 @@ int RPCExcutorRetryPolicy::PreProcessBeforeRetry(int status, bool retryUnlimit,
     bool rpcTimeout = false;
     bool needChangeMDS = false;
 
-    // If retryUnlimit is set, sleep a long time to retry no matter what the
-    // error it is.
-    if (retryUnlimit) {
-        if (++(*normalRetryCount) >
-            retryOpt_.normalRetryTimesBeforeTriggerWait) {
-            bthread_usleep(retryOpt_.waitSleepMs * 1000);
-        }
-
-        // 1. 访问存在的IP地址，但无人监听：ECONNREFUSED
-        // 2. 正常发送RPC情况下，对端进程挂掉了：EHOSTDOWN
-        // 3. 对端server调用了Stop：ELOGOFF
-        // 4. 对端链接已关闭：ECONNRESET
-        // 5. 在一个mds节点上rpc失败超过限定次数
-        // 在这几种场景下，主动切换mds。
-    } else if (status == -EHOSTDOWN || status == -ECONNRESET ||
-               status == -ECONNREFUSED || status == -brpc::ELOGOFF ||
-               *curMDSRetryCount >= retryOpt_.maxFailedTimesBeforeChangeAddr) {
+    // 1. 访问存在的IP地址，但无人监听：ECONNREFUSED
+    // 2. 正常发送RPC情况下，对端进程挂掉了：EHOSTDOWN
+    // 3. 对端server调用了Stop：ELOGOFF
+    // 4. 对端链接已关闭：ECONNRESET
+    // 5. 在一个mds节点上rpc失败超过限定次数
+    // 在这几种场景下，主动切换mds。
+    if (status == -EHOSTDOWN || status == -ECONNRESET ||
+        status == -ECONNREFUSED || status == -brpc::ELOGOFF ||
+        *curMDSRetryCount >= retryOpt_.maxFailedTimesBeforeChangeAddr) {
         needChangeMDS = true;
 
         // 在开启健康检查的情况下，在底层tcp连接失败时
@@ -140,6 +132,13 @@ int RPCExcutorRetryPolicy::PreProcessBeforeRetry(int status, bool retryUnlimit,
         *timeOutMS *= 2;
         *timeOutMS = std::min(*timeOutMS, retryOpt_.maxRPCTimeoutMS);
         *timeOutMS = std::max(*timeOutMS, retryOpt_.rpcTimeoutMs);
+    // If retryUnlimit is set, sleep a long time to retry no matter what the
+    // error it is.
+    } else if (retryUnlimit) {
+        if (++(*normalRetryCount) >
+            retryOpt_.normalRetryTimesBeforeTriggerWait) {
+            bthread_usleep(retryOpt_.waitSleepMs * 1000);
+        }
     }
 
     // 获取下一次需要重试的mds索引
@@ -179,7 +178,11 @@ int RPCExcutorRetryPolicy::GetNextMDSIndex(bool needChangeMDS,
     if (std::atomic_compare_exchange_strong(
             &currentWorkingMDSAddrIndex_, lastWorkingindex,
             currentWorkingMDSAddrIndex_.load())) {
-        int size = retryOpt_.addrs.size();
+        int size;
+        {
+            ReadLockGuard lock(retryOptLock_);
+            size = retryOpt_.addrs.size();
+        }
         nextMDSIndex =
             needChangeMDS ? (currentRetryIndex + 1) % size : currentRetryIndex;
     } else {
@@ -191,10 +194,14 @@ int RPCExcutorRetryPolicy::GetNextMDSIndex(bool needChangeMDS,
 
 int RPCExcutorRetryPolicy::ExcuteTask(int mdsindex, uint64_t rpcTimeOutMS,
                                       RPCFunc task) {
-    assert(mdsindex >= 0 &&
-           mdsindex < static_cast<int>(retryOpt_.addrs.size()));
-
-    const std::string &mdsaddr = retryOpt_.addrs[mdsindex];
+    std::string mdsaddr;
+    {
+        ReadLockGuard lock(retryOptLock_);
+        // happen when mds scaling down
+        if (mdsindex >= static_cast<int>(retryOpt_.addrs.size()))
+            return -brpc::ELOGOFF;
+        mdsaddr = retryOpt_.addrs[mdsindex];
+    }
 
     brpc::Channel channel;
     int ret = channel.Init(mdsaddr.c_str(), nullptr);
@@ -827,6 +834,7 @@ MDSClient::GetServerList(const LogicPoolID &logicalpooid,
         }
 
         int csinfonum = response.csinfo_size();
+        cpinfoVec->reserve(csinfonum);
         for (int i = 0; i < csinfonum; i++) {
             std::string copyset_peer;
             CopysetInfo<ChunkServerID> copysetseverl;

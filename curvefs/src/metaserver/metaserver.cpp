@@ -136,8 +136,11 @@ void Metaserver::InitLocalFileSystem() {
 void InitS3Option(const std::shared_ptr<Configuration>& conf,
                   S3ClientAdaptorOption* s3Opt) {
     LOG_IF(FATAL, !conf->GetUInt64Value("s3.batchsize", &s3Opt->batchSize));
-    LOG_IF(FATAL, !conf->GetBoolValue("s3.enableBatchDelete",
-                                      &s3Opt->enableBatchDelete));
+    bool ret =
+        conf->GetBoolValue("s3.enableBatchDelete", &s3Opt->enableBatchDelete);
+    LOG_IF(WARNING, ret == false)
+        << "config no s3.enableBatchDelete info, using default value "
+        << s3Opt->enableBatchDelete;
 }
 
 void Metaserver::InitPartitionOption(std::shared_ptr<S3ClientAdaptor> s3Adaptor,
@@ -194,10 +197,8 @@ void InitExcutorOption(const std::shared_ptr<Configuration>& conf,
                               &opts->minRetryTimesForceTimeoutBackoff);
     conf->GetValueFatalIfFail("excutorOpt.maxRetryTimesBeforeConsiderSuspend",
                               &opts->maxRetryTimesBeforeConsiderSuspend);
-    conf->GetValueFatalIfFail("excutorOpt.batchInodeAttrLimit",
-                              &opts->batchInodeAttrLimit);
-    conf->GetValueFatalIfFail("excutorOpt.enableMultiMountPointRename",
-                              &opts->enableRenameParallel);
+    conf->GetValueFatalIfFail(
+        "excutorOpt.batchInodeAttrLimit", &opts->batchInodeAttrLimit);
 }
 
 void InitMetaCacheOption(const std::shared_ptr<Configuration>& conf,

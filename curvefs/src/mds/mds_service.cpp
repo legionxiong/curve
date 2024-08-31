@@ -29,10 +29,9 @@ namespace mds {
 
 using mds::Mountpoint;
 
-void MdsServiceImpl::CreateFs(::google::protobuf::RpcController *controller,
-                              const ::curvefs::mds::CreateFsRequest *request,
-                              ::curvefs::mds::CreateFsResponse *response,
-                              ::google::protobuf::Closure *done) {
+void MdsServiceImpl::CreateFs(::google::protobuf::RpcController* controller,
+    const CreateFsRequest* request, CreateFsResponse* response,
+    ::google::protobuf::Closure* done) {
     (void)controller;
     brpc::ClosureGuard doneGuard(done);
     const std::string &fsName = request->fsname();
@@ -142,10 +141,9 @@ void MdsServiceImpl::CreateFs(::google::protobuf::RpcController *controller,
               << ", capacity = " << request->capacity();
 }
 
-void MdsServiceImpl::MountFs(::google::protobuf::RpcController *controller,
-                             const ::curvefs::mds::MountFsRequest *request,
-                             ::curvefs::mds::MountFsResponse *response,
-                             ::google::protobuf::Closure *done) {
+void MdsServiceImpl::MountFs(::google::protobuf::RpcController* controller,
+    const MountFsRequest* request, MountFsResponse* response,
+    ::google::protobuf::Closure* done) {
     (void)controller;
     brpc::ClosureGuard doneGuard(done);
     const std::string &fsName = request->fsname();
@@ -169,10 +167,9 @@ void MdsServiceImpl::MountFs(::google::protobuf::RpcController *controller,
               << ", mps: " << response->mutable_fsinfo()->mountpoints_size();
 }
 
-void MdsServiceImpl::UmountFs(::google::protobuf::RpcController *controller,
-                              const ::curvefs::mds::UmountFsRequest *request,
-                              ::curvefs::mds::UmountFsResponse *response,
-                              ::google::protobuf::Closure *done) {
+void MdsServiceImpl::UmountFs(::google::protobuf::RpcController* controller,
+    const UmountFsRequest* request, UmountFsResponse* response,
+    ::google::protobuf::Closure* done) {
     (void)controller;
     brpc::ClosureGuard doneGuard(done);
     const std::string &fsName = request->fsname();
@@ -192,10 +189,9 @@ void MdsServiceImpl::UmountFs(::google::protobuf::RpcController *controller,
               << ", mountPoint = " << mount.ShortDebugString();
 }
 
-void MdsServiceImpl::GetFsInfo(::google::protobuf::RpcController *controller,
-                               const ::curvefs::mds::GetFsInfoRequest *request,
-                               ::curvefs::mds::GetFsInfoResponse *response,
-                               ::google::protobuf::Closure *done) {
+void MdsServiceImpl::GetFsInfo(::google::protobuf::RpcController* controller,
+    const GetFsInfoRequest* request, GetFsInfoResponse* response,
+    ::google::protobuf::Closure* done) {
     (void)controller;
     brpc::ClosureGuard doneGuard(done);
 
@@ -227,10 +223,41 @@ void MdsServiceImpl::GetFsInfo(::google::protobuf::RpcController *controller,
               << response->ShortDebugString();
 }
 
-void MdsServiceImpl::DeleteFs(::google::protobuf::RpcController *controller,
-                              const ::curvefs::mds::DeleteFsRequest *request,
-                              ::curvefs::mds::DeleteFsResponse *response,
-                              ::google::protobuf::Closure *done) {
+void MdsServiceImpl::UpdateFsInfo(::google::protobuf::RpcController* controller,
+    const UpdateFsInfoRequest* request, UpdateFsInfoResponse* response,
+    ::google::protobuf::Closure* done) {
+    (void)controller;
+    brpc::ClosureGuard doneGuard(done);
+
+    LOG(INFO) << "UpdateFsInfo request: " << request->ShortDebugString();
+
+    // request parameter check, we want at least one field that need to change
+    if (!request->has_capacity()) {
+        response->set_statuscode(FSStatusCode::PARAM_ERROR);
+        LOG(WARNING) << "UpdateFsInfo fail, request: "
+                     << request->ShortDebugString() << ", errCode = "
+                     << FSStatusCode_Name(FSStatusCode::PARAM_ERROR);
+        return;
+    }
+
+    FSStatusCode status = fsManager_->UpdateFsInfo(request);
+
+    if (status != FSStatusCode::OK) {
+        response->set_statuscode(status);
+        LOG(ERROR) << "UpdateFsInfo fail, request: "
+                   << request->ShortDebugString()
+                   << ", errCode = " << FSStatusCode_Name(status);
+        return;
+    }
+
+    response->set_statuscode(FSStatusCode::OK);
+    LOG(INFO) << "UpdateFsInfo success, response: "
+              << response->ShortDebugString();
+}
+
+void MdsServiceImpl::DeleteFs(::google::protobuf::RpcController* controller,
+    const DeleteFsRequest* request, DeleteFsResponse* response,
+    ::google::protobuf::Closure* done) {
     (void)controller;
     brpc::ClosureGuard doneGuard(done);
     const std::string &fsName = request->fsname();
@@ -247,10 +274,9 @@ void MdsServiceImpl::DeleteFs(::google::protobuf::RpcController *controller,
 }
 
 void MdsServiceImpl::AllocateS3Chunk(
-    ::google::protobuf::RpcController *controller,
-    const ::curvefs::mds::AllocateS3ChunkRequest *request,
-    ::curvefs::mds::AllocateS3ChunkResponse *response,
-    ::google::protobuf::Closure *done) {
+    ::google::protobuf::RpcController* controller,
+    const AllocateS3ChunkRequest* request, AllocateS3ChunkResponse* response,
+    ::google::protobuf::Closure* done) {
     (void)controller;
 
     brpc::ClosureGuard guard(done);
@@ -284,10 +310,9 @@ void MdsServiceImpl::AllocateS3Chunk(
 }
 
 void MdsServiceImpl::ListClusterFsInfo(
-    ::google::protobuf::RpcController *controller,
-    const ::curvefs::mds::ListClusterFsInfoRequest *request,
-    ::curvefs::mds::ListClusterFsInfoResponse *response,
-    ::google::protobuf::Closure *done) {
+    ::google::protobuf::RpcController* controller,
+    const ListClusterFsInfoRequest* request,
+    ListClusterFsInfoResponse* response, ::google::protobuf::Closure* done) {
     (void)controller;
     (void)request;
 
@@ -299,10 +324,9 @@ void MdsServiceImpl::ListClusterFsInfo(
 }
 
 void MdsServiceImpl::RefreshSession(
-    ::google::protobuf::RpcController *controller,
-    const ::curvefs::mds::RefreshSessionRequest *request,
-    ::curvefs::mds::RefreshSessionResponse *response,
-    ::google::protobuf::Closure *done) {
+    ::google::protobuf::RpcController* controller,
+    const RefreshSessionRequest* request, RefreshSessionResponse* response,
+    ::google::protobuf::Closure* done) {
     (void)controller;
     brpc::ClosureGuard guard(done);
     fsManager_->RefreshSession(request, response);
@@ -329,6 +353,31 @@ void MdsServiceImpl::CommitTx(::google::protobuf::RpcController *controller,
     VLOG(3) << "CommitTx [request]: " << request->DebugString();
     fsManager_->CommitTx(request, response);
     VLOG(3) << "CommitTx [response]: " << request->DebugString();
+}
+
+void MdsServiceImpl::SetClientMdsAddrsOverride(
+    ::google::protobuf::RpcController *controller,
+    const ::curvefs::mds::SetClientMdsAddrsOverrideRequest *request,
+    ::curvefs::mds::SetClientMdsAddrsOverrideResponse *response,
+    ::google::protobuf::Closure *done) {
+    (void)controller;
+    brpc::ClosureGuard guard(done);
+    VLOG(3) << "SetClientMdsAddrsOverride [request]: "
+            << request->DebugString();
+    fsManager_->SetClientMdsAddrsOverride(request->clientmdsaddrsoverride());
+    response->set_statuscode(FSStatusCode::OK);
+    VLOG(3) << "SetClientMdsAddrsOverride [response]: "
+            << response->DebugString();
+}
+
+void MdsServiceImpl::Tso(::google::protobuf::RpcController* controller,
+    const TsoRequest* request, TsoResponse* response,
+    ::google::protobuf::Closure* done) {
+    (void)controller;
+    brpc::ClosureGuard guard(done);
+    VLOG(3) << "Tso [request]: " << request->DebugString();
+    fsManager_->Tso(request, response);
+    VLOG(3) << "Tso [response]: " << response->DebugString();
 }
 
 }  // namespace mds

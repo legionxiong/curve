@@ -25,9 +25,14 @@
 #define CURVEFS_SRC_CLIENT_METRIC_CLIENT_METRIC_H_
 
 #include <bvar/bvar.h>
+
+#include <atomic>
 #include <cstdint>
+#include <memory>
 #include <string>
+
 #include "src/client/client_metric.h"
+#include "src/common/s3_adapter.h"
 
 using curve::client::InterfaceMetric;
 
@@ -50,6 +55,7 @@ struct MDSClientMetric {
     InterfaceMetric refreshSession;
     InterfaceMetric getLatestTxId;
     InterfaceMetric commitTx;
+    InterfaceMetric tso;
     InterfaceMetric allocOrGetMemcacheCluster;
 
     MDSClientMetric()
@@ -65,6 +71,7 @@ struct MDSClientMetric {
           refreshSession(prefix, "refreshSession"),
           getLatestTxId(prefix, "getLatestTxId"),
           commitTx(prefix, "commitTx"),
+          tso(prefix, "tso"),
           allocOrGetMemcacheCluster(prefix, "allocOrGetMemcacheCluster") {}
 };
 
@@ -88,6 +95,10 @@ struct MetaServerClientMetric {
 
     // tnx
     InterfaceMetric prepareRenameTx;
+    InterfaceMetric prewriteRenameTx;
+    InterfaceMetric checkTxStatus;
+    InterfaceMetric resolveTxLock;
+    InterfaceMetric commitTx;
 
     // volume extent
     InterfaceMetric updateVolumeExtent;
@@ -95,9 +106,11 @@ struct MetaServerClientMetric {
     InterfaceMetric updateDeallocatableBlockGroup;
 
     MetaServerClientMetric()
-        : getDentry(prefix, "getDentry"), listDentry(prefix, "listDentry"),
+        : getDentry(prefix, "getDentry"),
+          listDentry(prefix, "listDentry"),
           createDentry(prefix, "createDentry"),
-          deleteDentry(prefix, "deleteDentry"), getInode(prefix, "getInode"),
+          deleteDentry(prefix, "deleteDentry"),
+          getInode(prefix, "getInode"),
           batchGetInodeAttr(prefix, "batchGetInodeAttr"),
           batchGetXattr(prefix, "batchGetXattr"),
           createInode(prefix, "createInode"),
@@ -105,10 +118,14 @@ struct MetaServerClientMetric {
           deleteInode(prefix, "deleteInode"),
           appendS3ChunkInfo(prefix, "appendS3ChunkInfo"),
           prepareRenameTx(prefix, "prepareRenameTx"),
+          prewriteRenameTx(prefix, "prewriteRenameTx"),
+          checkTxStatus(prefix, "checkTxStatus"),
+          resolveTxLock(prefix, "resolveTxLock"),
+          commitTx(prefix, "commitTx"),
           updateVolumeExtent(prefix, "updateVolumeExtent"),
           getVolumeExtent(prefix, "getVolumeExtent"),
-          updateDeallocatableBlockGroup(prefix,
-                                        "updateDeallocatableBlockGroup") {}
+          updateDeallocatableBlockGroup(
+              prefix, "updateDeallocatableBlockGroup") {}
 };
 
 struct InflightGuard {
@@ -238,10 +255,22 @@ struct S3Metric {
     InterfaceMetric adaptorWriteDiskCache;
     InterfaceMetric adaptorReadS3;
     InterfaceMetric adaptorReadDiskCache;
+    // Write to the backend s3
+    InterfaceMetric writeToS3;
+    // Read from backend s3 (excluding warmup)
+    InterfaceMetric readFromS3;
+    // write to the disk cache (excluding warmup)
+    InterfaceMetric writeToDiskCache;
+    // read from the disk cache (excluding warmup)
+    InterfaceMetric readFromDiskCache;
+    // write to kv cache (excluding warmup)
+    InterfaceMetric writeToKVCache;
+    // read from kv cache (excluding warmup)
+    InterfaceMetric readFromKVCache;
     bvar::Status<uint32_t> readSize;
     bvar::Status<uint32_t> writeSize;
 
-    explicit S3Metric(const std::string &name = "")
+    explicit S3Metric(const std::string& name = "")
         : fsName(!name.empty() ? name
                                : prefix + curve::common::ToHexString(this)),
           adaptorWrite(prefix, fsName + "_adaptor_write"),
@@ -250,31 +279,85 @@ struct S3Metric {
           adaptorWriteDiskCache(prefix, fsName + "_adaptor_write_disk_cache"),
           adaptorReadS3(prefix, fsName + "_adaptor_read_s3"),
           adaptorReadDiskCache(prefix, fsName + "_adaptor_read_disk_cache"),
+          writeToS3(prefix, fsName + "_write_to_s3"),
+          readFromS3(prefix, fsName + "_read_from_s3"),
+          writeToDiskCache(prefix, fsName + "_write_to_disk_cache"),
+          readFromDiskCache(prefix, fsName + "_read_from_disk_cache"),
+          writeToKVCache(prefix, fsName + "_write_to_kv_cache"),
+          readFromKVCache(prefix, fsName + "_read_from_kv_cache"),
           readSize(prefix, fsName + "_adaptor_read_size", 0),
           writeSize(prefix, fsName + "_adaptor_write_size", 0) {}
 };
+
+template <typename Tp>
+uint64_t LoadAtomicValue(void* atomValue) {
+    std::atomic<Tp>* bytes = reinterpret_cast<std::atomic<Tp>*>(atomValue);
+    return static_cast<uint64_t>(bytes->load());
+}
 
 struct DiskCacheMetric {
     static const std::string prefix;
 
     std::string fsName;
     InterfaceMetric writeS3;
-    bvar::Status<uint64_t> diskUsedBytes;
+    bvar::PassiveStatus<uint64_t> usedBytes_;
+    bvar::PassiveStatus<uint64_t> totalBytes_;
+    InterfaceMetric trim_;
 
-    explicit DiskCacheMetric(const std::string &name = "")
+    explicit DiskCacheMetric(const std::string& name = "",
+                             std::atomic<int64_t>* usedBytes = nullptr,
+                             std::atomic<int64_t>* totalBytes = nullptr)
         : fsName(!name.empty() ? name
                                : prefix + curve::common::ToHexString(this)),
           writeS3(prefix, fsName + "_write_s3"),
-          diskUsedBytes(prefix, fsName + "_diskcache_usedbytes", 0) {}
+          usedBytes_(prefix, fsName + "_diskcache_usedbytes",
+                     LoadAtomicValue<int64_t>, usedBytes),
+          totalBytes_(prefix, fsName + "_diskcache_totalbytes",
+                      LoadAtomicValue<int64_t>, totalBytes),
+          trim_(prefix, fsName + "_diskcache_trim") {}
 };
 
-struct KVClientMetric {
+struct KVClientManagerMetric {
     static const std::string prefix;
-    InterfaceMetric kvClientGet;
-    InterfaceMetric kvClientSet;
 
-    KVClientMetric()
-        : kvClientGet(prefix, "get"), kvClientSet(prefix, "set") {}
+    std::string fsName;
+    InterfaceMetric get;
+    InterfaceMetric set;
+    // kvcache count
+    bvar::Adder<uint64_t> count;
+    // kvcache hit
+    bvar::Adder<uint64_t> hit;
+    // kvcache miss
+    bvar::Adder<uint64_t> miss;
+    // kvcache getQueueSize
+    bvar::Adder<uint64_t> getQueueSize;
+    // kvcache setQueueSize
+    bvar::Adder<uint64_t> setQueueSize;
+
+    explicit KVClientManagerMetric(const std::string& name = "")
+        : fsName(!name.empty() ? name
+                               : prefix + curve::common::ToHexString(this)),
+          get(prefix, fsName + "_get"),
+          set(prefix, fsName + "_set"),
+          count(prefix, fsName + "_count"),
+          hit(prefix, fsName + "_hit"),
+          miss(prefix, fsName + "_miss"),
+          getQueueSize(prefix, fsName + "_get_queue_size"),
+          setQueueSize(prefix, fsName + "_set_queue_size") {}
+};
+
+struct MemcacheClientMetric {
+    static const std::string prefix;
+
+    std::string fsName;
+    InterfaceMetric get;
+    InterfaceMetric set;
+
+    explicit MemcacheClientMetric(const std::string& name = "")
+        : fsName(!name.empty() ? name
+                               : prefix + curve::common::ToHexString(this)),
+          get(prefix, fsName + "_get"),
+          set(prefix, fsName + "_set") {}
 };
 
 struct S3ChunkInfoMetric {
@@ -294,6 +377,33 @@ struct WarmupManagerS3Metric {
     WarmupManagerS3Metric()
         : warmupS3Cached(prefix, "s3_cached"),
           warmupS3CacheSize(prefix, "s3_cache_size") {}
+};
+
+void AsyncContextCollectMetrics(
+    std::shared_ptr<S3Metric> s3Metric,
+    const std::shared_ptr<curve::common::PutObjectAsyncContext>& context);
+
+void AsyncContextCollectMetrics(
+    std::shared_ptr<S3Metric> s3Metric,
+    const std::shared_ptr<curve::common::GetObjectAsyncContext>& context);
+
+struct FuseS3ClientIOLatencyMetric {
+    static const std::string prefix;
+
+    std::string fsName;
+
+    bvar::LatencyRecorder readAttrLatency;
+    bvar::LatencyRecorder readDataLatency;
+    bvar::LatencyRecorder writeAttrLatency;
+    bvar::LatencyRecorder writeDataLatency;
+
+    explicit FuseS3ClientIOLatencyMetric(const std::string& name = "")
+        : fsName(!name.empty() ? name
+                               : prefix + curve::common::ToHexString(this)),
+          readAttrLatency(prefix, fsName + "_read_attr_latency"),
+          readDataLatency(prefix, fsName + "_read_data_latency"),
+          writeAttrLatency(prefix, fsName + "_write_attr_latency"),
+          writeDataLatency(prefix, fsName + "_write_data_latency") {}
 };
 
 }  // namespace metric

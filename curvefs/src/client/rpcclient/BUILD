@@ -30,6 +30,7 @@ cc_library(
         "//curvefs/proto:space_cc_proto",
         "//curvefs/src/client/common",
         "//curvefs/src/client/metric:client_metric",
+        "//curvefs/src/client:filesystem_xattr",
         "//curvefs/src/common:curvefs_common",
         "//curvefs/src/common:metric_utils",
         "//external:brpc",
@@ -38,5 +39,6 @@ cc_library(
         "//src/client:curve_client",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/strings",
     ],
 )

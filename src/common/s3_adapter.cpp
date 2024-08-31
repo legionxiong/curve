@@ -205,9 +205,9 @@ void S3Adapter::Deinit() {
 void S3Adapter::Shutdown() {
     // one program should only call once
     auto shutdownSDK = [&]() {
-        Aws::ShutdownAPI(AWS_SDK_OPTIONS);
+        // Aws::ShutdownAPI(AWS_SDK_OPTIONS);
     };
-    std::call_once(S3SHUTDOWN_FLAG, shutdownSDK);
+    shutdownSDK();
 }
 
 void S3Adapter::Reinit(const S3AdapterOption& option) {
@@ -369,6 +369,7 @@ void S3Adapter::PutObjectAsync(std::shared_ptr<PutObjectAsyncContext> context) {
                 << "resend: " << ctx->key;
 
             ctx->retCode = (response.IsSuccess() ? 0 : -1);
+            ctx->timer.stop();
             ctx->cb(ctx);
         };
 
@@ -488,13 +489,9 @@ bool S3Adapter::ObjectExist(const Aws::String &key) {
     if (response.IsSuccess()) {
         return true;
     } else {
-        LOG(ERROR) << "HeadObject error:"
-                << bucketName_
-                << "--"
-                << key
-                << "--"
-                << response.GetError().GetExceptionName()
-                << response.GetError().GetMessage();
+        LOG(WARNING) << "HeadObject error:" << bucketName_ << "--" << key
+                     << "--" << response.GetError().GetExceptionName()
+                     << response.GetError().GetMessage();
         return false;
     }
 }
@@ -507,13 +504,9 @@ int S3Adapter::DeleteObject(const Aws::String &key) {
     if (response.IsSuccess()) {
         return 0;
     } else {
-            LOG(ERROR) << "DeleteObject error:"
-                << bucketName_
-                << "--"
-                << key
-                << "--"
-                << response.GetError().GetExceptionName()
-                << response.GetError().GetMessage();
+        LOG(WARNING) << "DeleteObject error:" << bucketName_ << "--" << key
+                     << "--" << response.GetError().GetExceptionName()
+                     << response.GetError().GetMessage();
         return -1;
     }
 }

@@ -45,6 +45,18 @@ std::ostream &operator<<(std::ostream &os, MetaServerOpType optype) {
     case MetaServerOpType::PrepareRenameTx:
         os << "PrepareRenameTx";
         break;
+    case MetaServerOpType::PrewriteRenameTx:
+        os << "PrewriteRenameTx";
+        break;
+    case MetaServerOpType::CheckTxStatus:
+        os << "CheckTxStatus";
+        break;
+    case MetaServerOpType::ResolveTxLock:
+        os << "ResolveTxLock";
+        break;
+    case MetaServerOpType::CommitTx:
+        os << "CommitTx";
+        break;
     case MetaServerOpType::GetInode:
         os << "GetInode";
         break;
@@ -79,7 +91,7 @@ std::ostream &operator<<(std::ostream &os, MetaServerOpType optype) {
 }
 
 const char kCurveFsWarmupOpAdd[] = "add";
-const char kCurveFsWarmupOpQuery[] = "query";
+const char kCurveFsWarmupOpCancel[] = "cancel";
 const char kCurveFsWarmupTypeList[] = "list";
 const char kCurveFsWarmupTypeSingle[] = "single";
 
@@ -87,9 +99,8 @@ WarmupOpType GetWarmupOpType(const std::string& op) {
     auto ret = WarmupOpType::kWarmupOpUnknown;
     if (op == kCurveFsWarmupOpAdd) {
         ret = WarmupOpType::kWarmupOpAdd;
-    }
-    if (op == kCurveFsWarmupOpQuery) {
-        ret = WarmupOpType::kWarmupOpQuery;
+    } else if (op == kCurveFsWarmupOpCancel) {
+        ret = WarmupOpType::kWarmupOpCancel;
     }
     return ret;
 }

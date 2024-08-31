@@ -27,7 +27,7 @@
 
 #include "curvefs/src/client/filesystem/error.h"
 #include "curvefs/src/client/filesystem/meta.h"
-#include "curvefs/test/client/mock_inode_cache_manager.h"
+#include "curvefs/test/client/mock_inode_manager.h"
 #include "curvefs/test/client/mock_metaserver_client.h"
 #include "curvefs/test/volume/mock/mock_block_device_client.h"
 #include "curvefs/test/volume/mock/mock_space_manager.h"
@@ -74,7 +74,7 @@ class DefaultVolumeStorageTest : public ::testing::Test {
 TEST_F(DefaultVolumeStorageTest, WriteAndReadTest_InodeNotFound) {
     EXPECT_CALL(inodeCacheMgr_, GetInode(_, _))
         .Times(2)
-        .WillRepeatedly(Return(CURVEFS_ERROR::NOTEXIST));
+        .WillRepeatedly(Return(CURVEFS_ERROR::NOT_EXIST));
 
     uint64_t ino = 1;
     off_t offset = 0;
@@ -82,10 +82,10 @@ TEST_F(DefaultVolumeStorageTest, WriteAndReadTest_InodeNotFound) {
     std::unique_ptr<char[]> data(new char[len]);
     FileOut fileOut;
 
-    ASSERT_EQ(CURVEFS_ERROR::NOTEXIST,
-              storage_.Read(ino, offset, len, data.get()));
-    ASSERT_EQ(CURVEFS_ERROR::NOTEXIST,
-              storage_.Write(ino, offset, len, data.get(), &fileOut));
+    ASSERT_EQ(
+        CURVEFS_ERROR::NOT_EXIST, storage_.Read(ino, offset, len, data.get()));
+    ASSERT_EQ(CURVEFS_ERROR::NOT_EXIST,
+        storage_.Write(ino, offset, len, data.get(), &fileOut));
 }
 
 TEST_F(DefaultVolumeStorageTest, ReadTest_BlockDevReadError) {

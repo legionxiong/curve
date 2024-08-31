@@ -241,6 +241,31 @@ TEST_F(FsManagerTest2, CreateFoundConflictFsNameAndNotIdenticalToPreviousOne) {
 
         EXPECT_EQ(FSStatusCode::FS_EXIST, fsManager_->CreateFs(&req, nullptr));
     }
+
+    // prefix is different
+    {
+        FsInfo fsinfo;
+        fsinfo.set_status(FsStatus::NEW);
+        fsinfo.set_fsname(fsname);
+        fsinfo.set_blocksize(4 * 1024);
+        fsinfo.set_fstype(FSType::TYPE_S3);
+
+        auto s3Info2 = *s3Info;
+        s3Info2.set_objectprefix(1);
+        fsinfo.mutable_detail()->set_allocated_s3info(
+            new curvefs::common::S3Info(s3Info2));
+
+        FsInfoWrapper wrapper(fsinfo);
+
+        EXPECT_CALL(*storage_, Exist(Matcher<const std::string&>(_)))
+            .WillOnce(Return(true));
+
+        EXPECT_CALL(*storage_, Get(Matcher<const std::string&>(_), _))
+            .WillOnce(
+                DoAll(SetArgPointee<1>(wrapper), Return(FSStatusCode::OK)));
+
+        EXPECT_EQ(FSStatusCode::FS_EXIST, fsManager_->CreateFs(&req, nullptr));
+    }
 }
 
 TEST_F(FsManagerTest2, CreateFoundUnCompleteOperation) {
@@ -409,6 +434,26 @@ TEST_F(FsManagerTest2, checkFsName) {
     EXPECT_FALSE(FsManager::CheckFsName("-"));
     EXPECT_FALSE(FsManager::CheckFsName("--"));
     EXPECT_FALSE(FsManager::CheckFsName("curve-test--01"));
+}
+
+TEST_F(FsManagerTest2, test_tso) {
+    // Tso success
+    TsoRequest request;
+    TsoResponse response;
+    EXPECT_CALL(*storage_, Tso(_, _)).
+        WillOnce(DoAll(SetArgPointee<0>(1),
+                       SetArgPointee<1>(100),
+                       Return(FSStatusCode::OK)));
+    fsManager_->Tso(&request, &response);
+    ASSERT_EQ(response.statuscode(), FSStatusCode::OK);
+    ASSERT_EQ(response.ts(), 1);
+    ASSERT_EQ(response.timestamp(), 100);
+
+    // Tso failed
+    EXPECT_CALL(*storage_, Tso(_, _)).
+        WillOnce(Return(FSStatusCode::INTERNAL_ERROR));
+    fsManager_->Tso(&request, &response);
+    ASSERT_EQ(response.statuscode(), FSStatusCode::INTERNAL_ERROR);
 }
 
 }  // namespace mds

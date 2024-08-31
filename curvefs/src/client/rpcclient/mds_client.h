@@ -112,12 +112,15 @@ class MdsClient {
     virtual FSStatusCode AllocS3ChunkId(uint32_t fsId, uint32_t idNum,
                                         uint64_t *chunkId) = 0;
 
-    virtual FSStatusCode
-    RefreshSession(const std::vector<PartitionTxId> &txIds,
-                   std::vector<PartitionTxId> *latestTxIdList,
-                   const std::string& fsName,
-                   const Mountpoint& mountpoint,
-                   std::atomic<bool>* enableSumInDir) = 0;
+    virtual FSStatusCode RefreshSession(
+        const std::vector<PartitionTxId> &txIds,
+        std::vector<PartitionTxId> *latestTxIdList, const std::string &fsName,
+        const Mountpoint &mountpoint, std::atomic<bool> *enableSumInDir,
+        const std::string &mdsAddrs, std::string *mdsAddrsOverride) = 0;
+
+    virtual std::string GetMdsAddrs() = 0;
+
+    virtual void SetMdsAddrs(const std::string &mdsAddrs) = 0;
 
     virtual FSStatusCode GetLatestTxId(uint32_t fsId,
                                        std::vector<PartitionTxId>* txIds) = 0;
@@ -137,6 +140,8 @@ class MdsClient {
                      const std::string& fsName,
                      const std::string& uuid,
                      uint64_t sequence) = 0;
+
+    virtual FSStatusCode Tso(uint64_t* ts, uint64_t* timestamp) = 0;
 
     // allocate block group
     virtual SpaceErrCode AllocateVolumeBlockGroup(
@@ -203,9 +208,15 @@ class MdsClientImpl : public MdsClient {
 
     FSStatusCode RefreshSession(const std::vector<PartitionTxId> &txIds,
                                 std::vector<PartitionTxId> *latestTxIdList,
-                                const std::string& fsName,
-                                const Mountpoint& mountpoint,
-                                std::atomic<bool>* enableSumInDir) override;
+                                const std::string &fsName,
+                                const Mountpoint &mountpoint,
+                                std::atomic<bool> *enableSumInDir,
+                                const std::string &mdsAddrs,
+                                std::string *mdsAddrsOverride) override;
+
+    std::string GetMdsAddrs() override;
+
+    void SetMdsAddrs(const std::string &mdsAddrs) override;
 
     FSStatusCode GetLatestTxId(uint32_t fsId,
                                std::vector<PartitionTxId>* txIds) override;
@@ -225,6 +236,8 @@ class MdsClientImpl : public MdsClient {
                      const std::string& uuid,
                      uint64_t sequence) override;
 
+    FSStatusCode Tso(uint64_t* ts, uint64_t* timestamp) override;
+
     // allocate block group
     SpaceErrCode AllocateVolumeBlockGroup(
         uint32_t fsId,
@@ -233,11 +246,9 @@ class MdsClientImpl : public MdsClient {
         std::vector<curvefs::mds::space::BlockGroup> *groups) override;
 
     // acquire block group
-    SpaceErrCode AcquireVolumeBlockGroup(
-        uint32_t fsId,
-        uint64_t blockGroupOffset,
-        const std::string &owner,
-        curvefs::mds::space::BlockGroup *groups) override;
+    SpaceErrCode AcquireVolumeBlockGroup(uint32_t fsId,
+        uint64_t blockGroupOffset, const std::string& owner,
+        curvefs::mds::space::BlockGroup* groups) override;
 
     // release block group
     SpaceErrCode ReleaseVolumeBlockGroup(

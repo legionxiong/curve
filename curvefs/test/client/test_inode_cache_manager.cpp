@@ -30,11 +30,12 @@
 #include "curvefs/src/client/inode_wrapper.h"
 #include "curvefs/src/client/rpcclient/metaserver_client.h"
 #include "curvefs/test/client/mock_metaserver_client.h"
-#include "curvefs/src/client/inode_cache_manager.h"
+#include "curvefs/src/client/inode_manager.h"
 #include "curvefs/src/common/define.h"
 #include "curvefs/src/client/filesystem/defer_sync.h"
 #include "curvefs/src/client/filesystem/openfile.h"
 #include "curvefs/src/client/filesystem/dir_cache.h"
+#include "curvefs/test/client/filesystem/helper/helper.h"
 
 namespace curvefs {
 namespace client {
@@ -66,6 +67,13 @@ using ::curvefs::client::common::OpenFilesOption;
 using ::curvefs::client::filesystem::DeferSync;
 using ::curvefs::client::filesystem::DirCache;
 using ::curvefs::client::filesystem::OpenFiles;
+using ::curvefs::client::filesystem::DeferSyncBuilder;
+using ::curvefs::client::filesystem::MkInode;
+using ::curvefs::client::filesystem::MkAttr;
+using ::curvefs::client::filesystem::InodeOption;
+using ::curvefs::client::filesystem::AttrOption;
+
+class DeferWatcherTest : public ::testing::Test {};
 
 class TestInodeCacheManager : public ::testing::Test {
  protected:
@@ -80,7 +88,7 @@ class TestInodeCacheManager : public ::testing::Test {
         RefreshDataOption option;
         option.maxDataSize = 1;
         option.refreshDataIntervalSec = 0;
-        auto deferSync = std::make_shared<DeferSync>(DeferSyncOption());
+        auto deferSync = std::make_shared<DeferSync>(true, DeferSyncOption());
         auto openFiles = std::make_shared<OpenFiles>(
             OpenFilesOption(), deferSync);
         iCacheManager_->Init(option, openFiles, deferSync);
@@ -97,6 +105,87 @@ class TestInodeCacheManager : public ::testing::Test {
     uint32_t fsId_ = 888;
     uint32_t timeout_ = 3;
 };
+
+TEST_F(DeferWatcherTest, Basic_cto) {
+    auto builder = DeferSyncBuilder();
+    auto deferSync = builder.SetOption([&](bool* cto, DeferSyncOption* option) {
+        *cto = true;
+        option->delay = 3;
+    }).Build();
+    deferSync->Start();
+    deferSync->Push(MkInode(100, InodeOption().length(1024).ctime(123, 456)));
+
+    auto watcher = std::make_shared<DeferWatcher>(false, deferSync);
+    std::set<uint64_t> inos { 100 };
+    watcher->PreGetAttrs(inos);
+
+    InodeAttr attr = MkAttr(100, AttrOption().length(0).ctime(123, 455));
+    std::list<InodeAttr> attrs;
+    attrs.emplace_back(attr);  // mock get attr from remote
+    watcher->PostGetAttrs(&attrs);
+
+    InodeAttr out = attrs.front();
+    ASSERT_EQ(out.length(), 0);
+    ASSERT_EQ(out.ctime(), 123);
+    ASSERT_EQ(out.ctime_ns(), 455);
+
+    deferSync->Stop();
+}
+
+TEST_F(DeferWatcherTest, Basic) {
+    auto builder = DeferSyncBuilder();
+    auto deferSync = builder.SetOption([&](bool* cto, DeferSyncOption* option) {
+        *cto = false;
+        option->delay = 3;
+    }).Build();
+    deferSync->Start();
+    deferSync->Push(MkInode(100, InodeOption().length(1024).ctime(123, 456)));
+
+    auto watcher = std::make_shared<DeferWatcher>(false, deferSync);
+    std::set<uint64_t> inos { 100 };
+    watcher->PreGetAttrs(inos);
+
+    // CASE 1: attr ctime < defered ctime => update success
+    {
+        InodeAttr attr = MkAttr(100, AttrOption().length(0).ctime(123, 455));
+        std::list<InodeAttr> attrs;
+        attrs.emplace_back(attr);  // mock get attr from remote
+        watcher->PostGetAttrs(&attrs);
+
+        InodeAttr out = attrs.front();
+        ASSERT_EQ(out.length(), 1024);
+        ASSERT_EQ(out.ctime(), 123);
+        ASSERT_EQ(out.ctime_ns(), 456);
+    }
+
+    // CASE 2: attr ctime > defered ctime => update failed
+    {
+        InodeAttr attr = MkAttr(100, AttrOption().length(0).ctime(123, 457));
+        std::list<InodeAttr> attrs;
+        attrs.emplace_back(attr);  // mock get attr from remote
+        watcher->PostGetAttrs(&attrs);
+
+        InodeAttr out = attrs.front();
+        ASSERT_EQ(out.length(), 0);
+        ASSERT_EQ(out.ctime(), 123);
+        ASSERT_EQ(out.ctime_ns(), 457);
+    }
+
+    // CASE 3: another interface
+    {
+        InodeAttr attr = MkAttr(100, AttrOption().length(0).ctime(123, 455));
+        std::map<uint64_t, InodeAttr> attrs;
+        attrs.emplace(100, attr);  // mock get attr from remote
+        watcher->PostGetAttrs(&attrs);
+
+        InodeAttr out = attrs[100];
+        ASSERT_EQ(out.length(), 1024);
+        ASSERT_EQ(out.ctime(), 123);
+        ASSERT_EQ(out.ctime_ns(), 456);
+    }
+
+    deferSync->Stop();
+}
 
 TEST_F(TestInodeCacheManager, GetInode) {
     uint64_t inodeId = 100;
@@ -123,7 +212,7 @@ TEST_F(TestInodeCacheManager, GetInode) {
         .WillOnce(Return(MetaStatusCode::NOT_FOUND));
     std::shared_ptr<InodeWrapper> inodeWrapper;
     CURVEFS_ERROR ret = iCacheManager_->GetInode(inodeId, inodeWrapper);
-    ASSERT_EQ(CURVEFS_ERROR::NOTEXIST, ret);
+    ASSERT_EQ(CURVEFS_ERROR::NOT_EXIST, ret);
 
     // miss cache and get inode ok, do not need streaming
     EXPECT_CALL(*metaClient_, GetInode(fsId_, inodeId, _, _))
@@ -190,7 +279,7 @@ TEST_F(TestInodeCacheManager, GetInodeAttr) {
         .WillOnce(DoAll(SetArgPointee<2>(attrs), Return(MetaStatusCode::OK)));
 
     CURVEFS_ERROR ret = iCacheManager_->GetInodeAttr(inodeId, &out);
-    ASSERT_EQ(CURVEFS_ERROR::NOTEXIST, ret);
+    ASSERT_EQ(CURVEFS_ERROR::NOT_EXIST, ret);
 
     ret = iCacheManager_->GetInodeAttr(inodeId, &out);
     ASSERT_EQ(CURVEFS_ERROR::OK, ret);
@@ -314,7 +403,7 @@ TEST_F(TestInodeCacheManager, BatchGetInodeAttr) {
 
     std::list<InodeAttr> getAttrs;
     CURVEFS_ERROR ret = iCacheManager_->BatchGetInodeAttr(&inodeIds, &getAttrs);
-    ASSERT_EQ(CURVEFS_ERROR::NOTEXIST, ret);
+    ASSERT_EQ(CURVEFS_ERROR::NOT_EXIST, ret);
 
     ret = iCacheManager_->BatchGetInodeAttr(&inodeIds, &getAttrs);
     ASSERT_EQ(CURVEFS_ERROR::OK, ret);
@@ -392,13 +481,13 @@ TEST_F(TestInodeCacheManager, BatchGetXAttr) {
     XAttr xattr;
     xattr.set_fsid(fsId_);
     xattr.set_inodeid(inodeId1);
-    xattr.mutable_xattrinfos()->insert({XATTRFILES, "1"});
-    xattr.mutable_xattrinfos()->insert({XATTRSUBDIRS, "1"});
-    xattr.mutable_xattrinfos()->insert({XATTRENTRIES, "2"});
-    xattr.mutable_xattrinfos()->insert({XATTRFBYTES, "100"});
+    xattr.mutable_xattrinfos()->insert({XATTR_DIR_FILES, "1"});
+    xattr.mutable_xattrinfos()->insert({XATTR_DIR_SUBDIRS, "1"});
+    xattr.mutable_xattrinfos()->insert({XATTR_DIR_ENTRIES, "2"});
+    xattr.mutable_xattrinfos()->insert({XATTR_DIR_FBYTES, "100"});
     xattrs.emplace_back(xattr);
     xattr.set_inodeid(inodeId2);
-    xattr.mutable_xattrinfos()->find(XATTRFBYTES)->second = "200";
+    xattr.mutable_xattrinfos()->find(XATTR_DIR_FBYTES)->second = "200";
     xattrs.emplace_back(xattr);
 
     EXPECT_CALL(*metaClient_, BatchGetXAttr(fsId_, inodeIds, _))
@@ -408,14 +497,14 @@ TEST_F(TestInodeCacheManager, BatchGetXAttr) {
 
     std::list<XAttr> getXAttrs;
     CURVEFS_ERROR ret = iCacheManager_->BatchGetXAttr(&inodeIds, &getXAttrs);
-    ASSERT_EQ(CURVEFS_ERROR::NOTEXIST, ret);
+    ASSERT_EQ(CURVEFS_ERROR::NOT_EXIST, ret);
 
     ret = iCacheManager_->BatchGetXAttr(&inodeIds, &getXAttrs);
     ASSERT_EQ(CURVEFS_ERROR::OK, ret);
     ASSERT_EQ(getXAttrs.size(), 2);
     ASSERT_THAT(getXAttrs.begin()->inodeid(), AnyOf(inodeId1, inodeId2));
     ASSERT_EQ(getXAttrs.begin()->fsid(), fsId_);
-    ASSERT_THAT(getXAttrs.begin()->xattrinfos().find(XATTRFBYTES)->second,
+    ASSERT_THAT(getXAttrs.begin()->xattrinfos().find(XATTR_DIR_FBYTES)->second,
         AnyOf("100", "200"));
 }
 

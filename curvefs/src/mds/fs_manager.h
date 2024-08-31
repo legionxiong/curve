@@ -74,6 +74,7 @@ struct FsManagerOption {
     uint32_t spaceReloadConcurrency = 10;
     uint32_t clientTimeoutSec = 20;
     curve::common::S3AdapterOption s3AdapterOption;
+    std::string mdsListenAddr;
 };
 
 class FsManager {
@@ -187,6 +188,9 @@ class FsManager {
     FSStatusCode GetFsInfo(const std::string& fsName, uint32_t fsId,
                            FsInfo* fsInfo);
 
+    FSStatusCode UpdateFsInfo(
+        const ::curvefs::mds::UpdateFsInfoRequest* request);
+
     void GetAllFsInfo(::google::protobuf::RepeatedPtrField<
                       ::curvefs::mds::FsInfo>* fsInfoVec);
 
@@ -199,6 +203,8 @@ class FsManager {
     void CommitTx(const CommitTxRequest* request,
                   CommitTxResponse* response);
 
+    void Tso(const TsoRequest* request, TsoResponse* response);
+
     // periodically check if the mount point is alive
     void BackEndCheckMountPoint();
     void CheckMountPoint();
@@ -206,6 +212,9 @@ class FsManager {
     // for utest
     bool GetClientAliveTime(const std::string& mountpoint,
         std::pair<std::string, uint64_t>* out);
+
+    std::string GetClientMdsAddrsOverride();
+    void SetClientMdsAddrsOverride(const std::string& addrs);
 
  private:
      // return 0: ExactlySame; 1: uncomplete, -1: neither
@@ -248,6 +257,11 @@ class FsManager {
 
     bool FillVolumeInfo(common::Volume* volume);
 
+    bool TestS3(const std::string& fsName);
+
+    FSStatusCode UpdateFsUsedBytes(
+        const std::string& fsName, int64_t deltaBytes);
+
  private:
     std::shared_ptr<FsStorage> fsStorage_;
     std::shared_ptr<SpaceManager> spaceManager_;
@@ -269,6 +283,11 @@ class FsManager {
     // <mountpoint, <fsname,last update time>>
     std::map<std::string, std::pair<std::string, uint64_t>> mpTimeRecorder_;
     mutable RWLock recorderMutex_;
+    // fsuage update lock
+    mutable RWLock fsUsageMutex_;
+    // client mds addrs override
+    std::string clientMdsAddrsOverride_;
+    mutable RWLock clientMdsAddrsOverrideMutex_;
 };
 }  // namespace mds
 }  // namespace curvefs

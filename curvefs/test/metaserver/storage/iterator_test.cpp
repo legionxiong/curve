@@ -38,8 +38,8 @@ namespace storage {
 
 using Hash = std::unordered_map<std::string, std::string>;
 using ContainerType = std::map<std::string, std::string>;
-using google::protobuf::util::MessageDifferencer;
 
+namespace {
 class HashIterator : public Iterator {
  public:
     explicit HashIterator(Hash* hash)
@@ -51,13 +51,14 @@ class HashIterator : public Iterator {
     void Next() override { iter_++; }
     std::string Key() override { return iter_->first; }
     std::string Value() override { return iter_->second; }
-    bool ParseFromValue(ValueType* value) { return true; }
+    bool ParseFromValue(ValueType* value) override { return true; }
     int Status() override { return 0; }
 
  private:
     Hash* hash_;
     Hash::iterator iter_;
 };
+}  // namespace
 
 class IteratorTest : public ::testing::Test {
  protected:

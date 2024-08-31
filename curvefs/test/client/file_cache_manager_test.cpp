@@ -26,7 +26,7 @@
 #include "curvefs/src/client/s3/client_s3_adaptor.h"
 #include "curvefs/src/client/s3/client_s3_cache_manager.h"
 #include "curvefs/test/client/mock_client_s3_cache_manager.h"
-#include "curvefs/test/client/mock_inode_cache_manager.h"
+#include "curvefs/test/client/mock_inode_manager.h"
 #include "curvefs/test/client/mock_client_s3.h"
 #include "src/common/concurrent/task_thread_pool.h"
 
@@ -223,7 +223,7 @@ TEST_F(FileCacheManagerTest, test_read_getinode_fail) {
         .WillOnce(DoAll(SetArgPointee<4>(requests), Return()));
     fileCacheManager_->SetChunkCacheManagerForTest(0, mockChunkCacheManager_);
     EXPECT_CALL(*mockInodeManager_, GetInode(_, _))
-        .WillOnce(Return(CURVEFS_ERROR::NOTEXIST));
+        .WillOnce(Return(CURVEFS_ERROR::NOT_EXIST));
     ASSERT_EQ(-1, fileCacheManager_->Read(inodeId, offset, len, buf));
 }
 

@@ -136,6 +136,31 @@ const (
 	CURVEBS_ALL                       = "all"
 	VIPER_CURVEBS_ALL                 = "curvebs.all"
 	CURVEBS_DEFAULT_ALL               = false
+	CURVEBS_SRC                       = "src"
+	VIPER_CURVEBS_SRC                 = "curvebs.src"
+	CURVEBS_DEST                      = "dest"
+	VIPER_CURVEBS_DEST                = "curvebs.dest"
+	CURVEBS_TASKID                    = "taskid"
+	VIPER_CURVEBS_TASKID              = "curvebs.taskid"
+	CURVEBS_SNAPSHOT_ID               = "snapshotid"
+	VIPER_CURVEBS_SNAPSHOT_ID         = "curvebs.snapshotqid"
+	CURVEBS_DEFAULT_SNAPSHOT_ID       = "*"
+	CURVEBS_SNAPSHOT_FAILED           = "snapshotFailed"
+	VIPER_CURVEBS_SNAPSHOT_FAILED     = "curvebs.snapshotFailed"
+	CURVEBS_DEFAULT_SNAPSHOT_FAILED   = false
+	CURVEBS_FAILED                    = "failed"
+	VIPER_CURVEBS_FAILED              = "curvebs.failed"
+	CURVEBS_CHUNK_SIZE                = "chunksize"
+	VIPER_CURVEBS_CHUNK_SIZE          = "curvebs.chunksize"
+	CURVEBS_CHECK_HASH                = "checkhash"
+	VIPER_CURVEBS_CHECK_HASH          = "curvebs.checkhash"
+	CURVEBS_DEFAULT_CHECK_HASH        = false
+	CURVEBS_FILENAME                  = "filename"
+	VIPER_CURVEBS_FILENAME            = "curvebs.filename"
+	CURVEBS_SNAPSHOTNAME              = "snapshotname"
+	VIPER_CURVEBS_SNAPSHOTNAME        = "curvebs.snapshotname"
+	CURVEBS_FILE_ID                   = "fileId"
+	VIPER_CURVEBS_FILE_ID             = "curvebs.fileId"
 )
 
 var (
@@ -186,29 +211,42 @@ var (
 		CURVEBS_SERVER_IP:           VIPER_CURVEBS_SERVER_IP,
 		CURVEBS_SERVER_PORT:         VIPER_CURVEBS_SERVER_PORT,
 		CURVEBS_ALL:                 VIPER_CURVEBS_ALL,
+		CURVEBS_SRC:                 VIPER_CURVEBS_SRC,
+		CURVEBS_DEST:                VIPER_CURVEBS_DEST,
+		CURVEBS_TASKID:              VIPER_CURVEBS_TASKID,
+		CURVEBS_SNAPSHOT_ID:         VIPER_CURVEBS_SNAPSHOT_ID,
+		CURVEBS_FAILED:              VIPER_CURVEBS_FAILED,
+		CURVEBS_CHUNK_SIZE:          VIPER_CURVEBS_CHUNK_SIZE,
+		CURVEBS_CHECK_HASH:          VIPER_CURVEBS_CHECK_HASH,
+		CURVEBS_FILENAME:            VIPER_CURVEBS_FILENAME,
+		CURVEBS_SNAPSHOTNAME:        VIPER_CURVEBS_SNAPSHOTNAME,
+		CURVEBS_SNAPSHOT_FAILED:     VIPER_CURVEBS_SNAPSHOT_FAILED,
 	}
 
 	BSFLAG2DEFAULT = map[string]interface{}{
 		// bs
-		CURVEBS_USER:           CURVEBS_DEFAULT_USER,
-		CURVEBS_PASSWORD:       CURVEBS_DEFAULT_PASSWORD,
-		CURVEBS_SIZE:           CURVEBS_DEFAULT_SIZE,
-		CURVEBS_STRIPE_UNIT:    CURVEBS_DEFAULT_STRIPE_UNIT,
-		CURVEBS_STRIPE_COUNT:   CURVEBS_DEFAULT_STRIPE_COUNT,
-		CURVEBS_BURST:          CURVEBS_DEFAULT_BURST,
-		CURVEBS_BURST_LENGTH:   CURVEBS_DEFAULT_BURST_LENGTH,
-		CURVEBS_PATH:           CURVEBS_DEFAULT_PATH,
-		CURVEBS_FORCE:          CURVEBS_DEFAULT_FORCE,
-		CURVEBS_MARGIN:         CURVEBS_DEFAULT_MARGIN,
-		CURVEBS_OP:             CURVEBS_DEFAULT_OP,
-		CURVEBS_CHECK_TIME:     CURVEBS_DEFAULT_CHECK_TIME,
-		CURVEBS_SCAN:           CURVEBS_DEFAULT_SCAN,
-		CURVEBS_CHUNKSERVER_ID: CURVEBS_DEFAULT_CHUNKSERVER_ID,
-		CURVEBS_DRYRUN:         CURVEBS_DEFAULT_DRYRUN,
-		CURVEBS_FIlTER:         CURVEBS_DEFAULT_FILTER,
-		CURVEBS_ALL:            CURVEBS_DEFAULT_ALL,
-		CURVEBS_LOGIC_POOL_ID:  CURVEBS_DEFAULT_LOGIC_POOL_ID,
-		CURVEBS_COPYSET_ID:     CURVEBS_DEFAULT_COPYSET_ID,
+		CURVEBS_USER:            CURVEBS_DEFAULT_USER,
+		CURVEBS_PASSWORD:        CURVEBS_DEFAULT_PASSWORD,
+		CURVEBS_SIZE:            CURVEBS_DEFAULT_SIZE,
+		CURVEBS_STRIPE_UNIT:     CURVEBS_DEFAULT_STRIPE_UNIT,
+		CURVEBS_STRIPE_COUNT:    CURVEBS_DEFAULT_STRIPE_COUNT,
+		CURVEBS_BURST:           CURVEBS_DEFAULT_BURST,
+		CURVEBS_BURST_LENGTH:    CURVEBS_DEFAULT_BURST_LENGTH,
+		CURVEBS_PATH:            CURVEBS_DEFAULT_PATH,
+		CURVEBS_FORCE:           CURVEBS_DEFAULT_FORCE,
+		CURVEBS_MARGIN:          CURVEBS_DEFAULT_MARGIN,
+		CURVEBS_OP:              CURVEBS_DEFAULT_OP,
+		CURVEBS_CHECK_TIME:      CURVEBS_DEFAULT_CHECK_TIME,
+		CURVEBS_SCAN:            CURVEBS_DEFAULT_SCAN,
+		CURVEBS_CHUNKSERVER_ID:  CURVEBS_DEFAULT_CHUNKSERVER_ID,
+		CURVEBS_DRYRUN:          CURVEBS_DEFAULT_DRYRUN,
+		CURVEBS_FIlTER:          CURVEBS_DEFAULT_FILTER,
+		CURVEBS_ALL:             CURVEBS_DEFAULT_ALL,
+		CURVEBS_LOGIC_POOL_ID:   CURVEBS_DEFAULT_LOGIC_POOL_ID,
+		CURVEBS_COPYSET_ID:      CURVEBS_DEFAULT_COPYSET_ID,
+		CURVEBS_CHECK_HASH:      CURVEBS_DEFAULT_CHECK_HASH,
+		CURVEBS_SNAPSHOT_ID:     CURVEBS_DEFAULT_SNAPSHOT_ID,
+		CURVEBS_SNAPSHOT_FAILED: CURVEBS_DEFAULT_SNAPSHOT_FAILED,
 	}
 )
 
@@ -526,6 +564,10 @@ func AddBsPathRequiredFlag(cmd *cobra.Command) {
 	AddBsStringRequiredFlag(cmd, CURVEBS_PATH, "file path")
 }
 
+func AddBsUserRequireFlag(cmd *cobra.Command) {
+	AddBsStringRequiredFlag(cmd, CURVEBS_USER, "user name")
+}
+
 func AddBsLogicalPoolIdRequiredFlag(cmd *cobra.Command) {
 	AddBsUint32RequiredFlag(cmd, CURVEBS_LOGIC_POOL_ID, "logical pool id")
 }
@@ -544,6 +586,10 @@ func AddBsLogicalPoolIdSliceRequiredFlag(cmd *cobra.Command) {
 
 func AddBsPeersConfFlag(cmd *cobra.Command) {
 	AddBsStringSliceRequiredFlag(cmd, CURVEBS_PEERS_ADDRESS, "peers info.")
+}
+
+func AddBsPeersAddressFlag(cmd *cobra.Command) {
+	AddBsStringRequiredFlag(cmd, CURVEBS_PEERS_ADDRESS, "peers address.")
 }
 
 func AddBsForceDeleteOptionFlag(cmd *cobra.Command) {
@@ -602,8 +648,68 @@ func AddBsChunkIdSliceRequiredFlag(cmd *cobra.Command) {
 	AddBsStringSliceRequiredFlag(cmd, CURVEBS_CHUNK_ID, "chunk ids")
 }
 
+func AddBsChunkIdRequiredFlag(cmd *cobra.Command) {
+	AddBsUint64RequiredFlag(cmd, CURVEBS_CHUNK_ID, "chunk id")
+}
+
+func AddBsChunkSizeRequiredFlag(cmd *cobra.Command) {
+	AddBsUint32RequiredFlag(cmd, CURVEBS_CHUNK_SIZE, "chunk size")
+}
+
+func AddBsCheckHashOptionFlag(cmd *cobra.Command) {
+	AddBsBoolOptionFlag(cmd, CURVEBS_CHECK_HASH, "whether to check chunk hash(take longer time)")
+}
+
 func AddBsChunkServerAddressSliceRequiredFlag(cmd *cobra.Command) {
 	AddBsStringSliceRequiredFlag(cmd, CURVEBS_CHUNKSERVER_ADDRESS, "chunk server address")
+}
+
+func AddBsSrcOptionFlag(cmd *cobra.Command) {
+	AddBsStringOptionFlag(cmd, CURVEBS_SRC, "source")
+}
+
+func AddBsDestOptionFlag(cmd *cobra.Command) {
+	AddBsStringOptionFlag(cmd, CURVEBS_DEST, "destination")
+}
+
+func AddBsTaskIDOptionFlag(cmd *cobra.Command) {
+	AddBsStringOptionFlag(cmd, CURVEBS_TASKID, "task id")
+}
+
+func AddBsFailedOptionFlag(cmd *cobra.Command) {
+	AddBsBoolOptionFlag(cmd, CURVEBS_FAILED, "failed")
+}
+
+func AddBsUserRequiredFlag(cmd *cobra.Command) {
+	AddBsStringRequiredFlag(cmd, CURVEBS_USER, "user name")
+}
+
+func AddBsTaskIDRequiredFlag(cmd *cobra.Command) {
+	AddBsStringRequiredFlag(cmd, CURVEBS_TASKID, "task id")
+}
+
+func AddBsSnapshotIDOptionFlag(cmd *cobra.Command) {
+	AddBsStringOptionFlag(cmd, CURVEBS_SNAPSHOT_ID, "snapshot seqId")
+}
+
+func AddBsSnapshotFailedOptionFlag(cmd *cobra.Command) {
+	AddBsBoolOptionFlag(cmd, CURVEBS_SNAPSHOT_FAILED, "snapshot failed(error)")
+}
+
+func AddBsTaskTypeOptionFlag(cmd *cobra.Command) {
+	AddBsStringOptionFlag(cmd, CURVEBS_TYPE, "only query target type (clone or recover)")
+}
+
+func AddBsFileNameRequiredFlag(cmd *cobra.Command) {
+	AddBsStringRequiredFlag(cmd, CURVEBS_FILENAME, "file name")
+}
+
+func AddBsSnapshotNameRequiredFlag(cmd *cobra.Command) {
+	AddBsStringRequiredFlag(cmd, CURVEBS_SNAPSHOTNAME, "snapshot name")
+}
+
+func AddBsFileIdOptionFlag(cmd *cobra.Command) {
+	AddBsUint64OptionFlag(cmd, CURVEBS_FILE_ID, "recover fileId")
 }
 
 // get stingslice flag
@@ -788,4 +894,8 @@ func GetBsChunkServerId(cmd *cobra.Command) []uint32 {
 		chunkserveridSlice = append(chunkserveridSlice, uint32(idUint))
 	}
 	return chunkserveridSlice
+}
+
+func GetBsFileId(cmd *cobra.Command) uint64 {
+	return GetBsFlagUint64(cmd, CURVEBS_FILE_ID)
 }

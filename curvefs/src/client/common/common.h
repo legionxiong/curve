@@ -50,6 +50,10 @@ enum class MetaServerOpType {
     CreateDentry,
     DeleteDentry,
     PrepareRenameTx,
+    PrewriteRenameTx,
+    CheckTxStatus,
+    ResolveTxLock,
+    CommitTx,
     GetInode,
     BatchGetInodeAttr,
     BatchGetXAttr,
@@ -65,21 +69,24 @@ enum class MetaServerOpType {
 
 std::ostream &operator<<(std::ostream &os, MetaServerOpType optype);
 
-const uint32_t MAX_XATTR_NAME_LENGTH = 255;
-const uint32_t MAX_XATTR_VALUE_LENGTH = 64 * 1024;
-
-const char kCurveFsWarmupXAttr[] = "curvefs.warmup.op";
-
-
-constexpr int kWarmupOpNum = 4;
+constexpr size_t kMinWarmupOpArgsNum = 1;
+constexpr size_t kWarmupAddArgsNum = 6;
+constexpr size_t kWarmupCancelArgsNum = 2;
 
 enum class WarmupOpType {
     kWarmupOpUnknown = 0,
     kWarmupOpAdd = 1,
-    kWarmupOpQuery = 2,
+    kWarmupOpCancel = 2,
 };
 
 WarmupOpType GetWarmupOpType(const std::string& op);
+
+constexpr int kWarmupOpType = 0;
+constexpr int kWarmupDataType = 1;
+constexpr int kEntryFilePathInClient = 2;
+constexpr int kWarmupCacheStorageType = 3;
+constexpr int kMountPointInCurvefs = 4;
+constexpr int kRootPathInCurvefs = 5;
 
 enum class WarmupType {
     kWarmupTypeUnknown = 0,
